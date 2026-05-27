@@ -1,0 +1,58 @@
+{
+  "name": "tsbootkit",
+  "version": "1.0.0",
+  "description": "TypeScript PXE/TFTP toolkit — TFTP, DHCP, BOOTP, and PXE servers",
+  "type": "module",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thehonker/tsbootkit"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "files": [
+    "dist"
+  ],
+  "main": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "bin": {
+    "tsbootkit-tftpd": "dist/cli/tftpd.mjs",
+    "tsbootkit-dhcpd": "dist/cli/dhcpd.mjs",
+    "tsbootkit-bootpd": "dist/cli/bootpd.mjs",
+    "tsbootkit-pxed": "dist/cli/pxed.mjs"
+  },
+  "scripts": {
+    "build": "tsup && npm run sbom",
+    "sbom": "npm sbom --sbom-format cyclonedx --omit dev > dist/sbom.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/ test/",
+    "start": "node --import tsx src/cli/pxed.mts"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.4.0",
+    "mime-types": "^3.0.2",
+    "winston": "^3.17.0",
+    "yaml": "^2.7.1",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^24.0.0",
+    "@types/yargs": "^17.0.33",
+    "eslint": "^9.28.0",
+    "globals": "^17.6.0",
+    "tsup": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.60.0",
+    "vitest": "^3.2.0"
+  }
+}

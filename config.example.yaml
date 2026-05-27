@@ -1,0 +1,155 @@
+# tsbootkit configuration example
+#
+# Start with: tsbootkit-pxed --config tsbootkit.yaml
+#
+# Only "interface", "bootFile", and "tftpRoot" are required.
+# All other fields are optional and auto-detected where possible.
+
+# ── Required ────────────────────────────────────────────────────────
+
+# Network interface to listen on
+interface: eth0
+
+# PXE boot filename served to clients via DHCP/BOOTP
+# (fallback when no architecture-specific boot file matches)
+bootFile: pxelinux.0
+
+# TFTP server root directory
+tftpRoot: /tftpboot
+
+# ── Architecture-aware boot files ───────────────────────────────────
+
+# Override bootFile per client architecture (DHCP option 93 / RFC 4578).
+# The global bootFile is used as fallback for unknown architectures.
+#
+# bootFiles:
+#   bios: pxelinux.0
+#   efiX86_64: bootx64.efi
+#   efiARM64: grubaa64.efi
+
+# ── Network (auto-detected from interface if omitted) ───────────────
+
+# mode: dhcp            # dhcp (default) or bootp
+# serverIP: 192.168.1.1
+# subnetMask: 255.255.255.0
+# router: 192.168.1.1
+# tftpServer: 192.168.1.1
+
+# dnsServers:
+#   - 8.8.8.8
+#   - 8.8.4.4
+
+# ── DHCP options ────────────────────────────────────────────────────
+
+# dhcp:
+#   leaseTime: 600       # seconds (60–86400)
+#   answerAll: false      # respond to non-PXE DHCP requests?
+
+# ── BOOTP options ───────────────────────────────────────────────────
+
+# bootp:
+#   allocationLifetime: 86400  # seconds before reclaiming unused IPs (60–604800, default 86400 = 24h)
+
+# ── TFTP options ────────────────────────────────────────────────────
+
+# tftp:
+#   port: 69
+#   maxTransfers: 16
+#   allowWrite: false
+
+# ── Security ────────────────────────────────────────────────────────
+
+# Whether to follow symbolic links in TFTP/HTTP file serving.
+# Default: false — symlinks pointing outside the root directory are blocked.
+# Set to true only if you trust the contents of tftpRoot.
+# followSymlinks: false
+
+# ── Logging ─────────────────────────────────────────────────────────
+
+# logging:
+#   level: info           # error | warn | info | debug | trace
+#   file: /var/log/tsbootkit.log
+
+# ── Lifecycle hooks ─────────────────────────────────────────────────
+
+# Execute external programs on server events.
+# Hooks are fire-and-forget — failures are logged, never block the event flow.
+# The "events" filter is optional — omit it to match all events.
+#
+# TFTP events:  pre | post | on-error
+# DHCP events:  discover | offer | request | ack | nak
+# BOOTP events: request | reply
+#
+# TFTP arguments:  <event> <direction> <client-ip> <client-port> <filename> [extra...]
+#   extra (post):      <bytes-sent> <bytes-received>
+#   extra (on-error):  <error-code> <error-message>
+#
+# DHCP arguments:  <event> <client-mac> [extra...]
+#   extra (discover):  <hostname>
+#   extra (offer):     <offered-ip>
+#   extra (request):   <requested-ip> <hostname>
+#   extra (ack):       <assigned-ip> <hostname>
+#   extra (nak):       <reason>
+#
+# BOOTP arguments: <event> <client-mac> [extra...]
+#   extra (reply):     <assigned-ip>
+#
+# hooks:
+#   - exec: /usr/local/bin/notify-boot.sh
+#     events: [post]
+#   - exec: /usr/local/bin/log-error.py
+#     events: [on-error]
+#     extraArgs: ["--channel", "#ops"]
+#   - exec: /usr/local/bin/dhcp-notify.sh
+#     events: [ack]
+#   - exec: /usr/local/bin/log-all.sh
+
+# ── Static reservations ─────────────────────────────────────────────
+#
+# Reserved IPs are always offered to their MAC address.
+# Dynamic clients get random IPs from the subnet.
+# No lease database — ad-hoc usage only.
+# Works in both DHCP and BOOTP modes.
+
+# reservations:
+#   # Specific machine with custom boot file
+#   - mac: aa:bb:cc:dd:ee:01
+#     ip: 192.168.1.50
+#     bootFile: custom/boot.efi
+#     hostname: build-server
+#
+#   # Machine with per-architecture boot files
+#   - mac: 11:22:33:44:55:66
+#     ip: 192.168.1.51
+#     hostname: test-client
+#     # bootFiles:
+#     #   bios: pxelinux.0
+#     #   efiX86_64: bootx64.efi
+#
+#   # Minimal: just MAC → IP
+#   - mac: 33:44:55:66:77:88
+#     ip: 192.168.1.52
+
+# ── Health check ────────────────────────────────────────────────────
+
+# HTTP endpoint for Docker HEALTHCHECK and monitoring
+# Also hosts the web dashboard at /ui/
+# healthPort: 9470     # Set to 0 to disable
+
+# ── HTTP fallback ──────────────────────────────────────────────────
+
+# Some UEFI firmware prefers HTTP over TFTP for boot file downloads
+# Serves the same root directory as TFTP
+# httpPort: 80        # Set to 0 to disable (default)
+
+# http:
+#   port: 80               # same as httpPort above
+#   host: 0.0.0.0         # host to bind
+#   maxFileSize: 1073741824  # max bytes to serve (default 1GB)
+
+# ── mDNS advertisement ──────────────────────────────────────────────
+
+# Announce TFTP (and HTTP if enabled) via Zeroconf/Bonjour
+# Defaults to serverIP. Set to "" to disable.
+# Important for Docker: container IP ≠ host IP
+# mdnsAddress: 192.168.1.1

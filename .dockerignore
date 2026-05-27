@@ -1,0 +1,13 @@
+node_modules
+dist
+test
+*.log
+.git
+.gitignore
+.github
+.eslintcache
+coverage
+.tsbuildinfo
+.dockerignore
+vitest.config.ts
+eslint.config.mjs

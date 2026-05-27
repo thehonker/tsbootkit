@@ -1,5 +1,7 @@
 # tsbootkit
 
+[![npm](https://img.shields.io/npm/v/tsbootkit)](https://www.npmjs.com/package/tsbootkit)
+
 A TypeScript PXE/TFTP toolkit — TFTP, DHCP, BOOTP, and PXE servers for network booting.
 
 Inspired by [pTFTPd](https://github.com/mpetazzoni/ptftpd).

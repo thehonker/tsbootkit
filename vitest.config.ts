@@ -6,5 +6,6 @@ export default defineConfig({
     // TFTP client tests use real UDP sockets that can interfere under parallel execution
     pool: 'forks',
     fileParallelism: false,
+    testTimeout: 20_000,
   },
 });

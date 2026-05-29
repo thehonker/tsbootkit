@@ -63,7 +63,7 @@ describe('TFTPClient', () => {
       await fs.rm(downloadPath, { force: true });
     });
 
-    it('downloads a file with LAN options', 15000, async () => {
+    it('downloads a file with LAN options', async () => {
       const lanServer = new TFTPServer({
         port: LAN_TEST_PORT,
         root: TEST_ROOT,
@@ -88,7 +88,7 @@ describe('TFTPClient', () => {
       lanClient.close();
       await lanServer.stop();
       await fs.rm(downloadPath, { force: true });
-    });
+    }, 15000);
 
     it('fails with error for missing file', async () => {
       const downloadPath = path.join(TEST_ROOT, 'nope.txt');

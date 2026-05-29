@@ -14,8 +14,8 @@ import { EventEmitter } from 'node:events';
 
 import { createLogger } from '../shared/logger.mjs';
 import { onShutdown } from '../shared/signals.mjs';
-import { IPv4, MAC, type InterfaceConfig } from '../shared/types.mjs';
-import { getInterfaceConfig } from '../shared/network.mjs';
+import { IPv4, MAC, type InterfaceConfig, type InterfaceStatus } from '../shared/types.mjs';
+import { getInterfaceConfig, getInterfaceStatus, waitForInterface } from '../shared/network.mjs';
 import { HealthCheckServer, HealthStatus } from '../shared/health.mjs';
 import { HTTPServer } from '../shared/http.mjs';
 import { mDNSAdvertiser } from '../shared/mdns.mjs';
@@ -38,7 +38,8 @@ const _version: string = typeof PKG_VERSION !== 'undefined' ? PKG_VERSION : '0.0
 // ─── PXE Server ────────────────────────────────────────────────────
 
 export class PXEServer extends EventEmitter {
-  private readonly config: {
+  private readonly rawConfig: PXEServerConfig;
+  private config!: {
     interface: string;
     bootFile: string;
     tftpRoot: string;
@@ -67,46 +68,14 @@ export class PXEServer extends EventEmitter {
   private healthServer: HealthCheckServer | null = null;
   private httpServer: HTTPServer | null = null;
   private mdns: mDNSAdvertiser | null = null;
+  private interfaceMonitor: ReturnType<typeof setInterval> | null = null;
+  private interfaceState: InterfaceStatus | 'ip-changed' = 'up';
   private readonly log;
   private running = false;
 
   constructor(config: PXEServerConfig) {
     super();
-
-    // Resolve interface config — always needed for MAC address
-    let ifaceConfig: InterfaceConfig | null = null;
-    try {
-      ifaceConfig = getInterfaceConfig(config.interface);
-    } catch {
-      // Interface exists but is internal (loopback) — MAC not available
-    }
-    const mode = config.mode ?? PXEMode.DHCP;
-
-    this.config = {
-      interface: config.interface,
-      bootFile: config.bootFile,
-      tftpRoot: config.tftpRoot,
-      mode,
-      serverIP: config.serverIP ?? ifaceConfig?.address as IPv4,
-      subnetMask: config.subnetMask ?? ifaceConfig?.netmask as IPv4,
-      router: config.router ?? config.serverIP ?? ifaceConfig?.address as IPv4,
-      tftpServer: config.tftpServer ?? config.serverIP ?? ifaceConfig?.address as IPv4,
-      dnsServers: config.dnsServers ?? [],
-      dhcp: config.dhcp,
-      tftpPort: config.tftpPort ?? 69,
-      maxTransfers: config.maxTransfers ?? 16,
-      allowWrite: config.allowWrite ?? false,
-      reservations: config.reservations ?? [],
-      healthPort: config.healthPort ?? 9470,
-      httpPort: config.httpPort ?? config.http?.port ?? 0,
-      http: config.http,
-      mdnsAddress: (config.mdnsAddress ?? config.serverIP) as string | undefined,
-      bootFiles: config.bootFiles,
-      hooks: config.hooks,
-      bootp: config.bootp,
-      followSymlinks: config.followSymlinks,
-    };
-
+    this.rawConfig = config;
     this.log = createLogger('pxed');
   }
 
@@ -114,11 +83,77 @@ export class PXEServer extends EventEmitter {
 
   /**
    * Start the PXE daemon (TFTP + DHCP/BOOTP).
+   *
+   * If the configured interface is down and `wait` is enabled, polls
+   * until the interface comes up (or timeout expires). Otherwise
+   * throws immediately for unavailable interfaces.
    */
   async start(): Promise<void> {
     if (this.running) {
       throw new Error('PXE server is already running');
     }
+
+    const mode = this.rawConfig.mode ?? PXEMode.DHCP;
+
+    // ── Resolve interface ────────────────────────────────────────
+    const status = getInterfaceStatus(this.rawConfig.interface);
+    let ifaceConfig: InterfaceConfig;
+
+    if (status === 'up') {
+      ifaceConfig = getInterfaceConfig(this.rawConfig.interface);
+    } else if (this.rawConfig.wait) {
+      this.log.info(
+        `Interface ${this.rawConfig.interface} is ${status}, waiting for it to come up...`,
+      );
+
+      let lastLogTime = 0;
+      ifaceConfig = await waitForInterface(this.rawConfig.interface, {
+        timeoutMs: (this.rawConfig.waitTimeout ?? 0) * 1000,
+        onPoll: (currentStatus, elapsedMs) => {
+          // Log every ~10s
+          if (elapsedMs - lastLogTime >= 10_000) {
+            lastLogTime = elapsedMs;
+            this.log.info(
+              `Still waiting for ${this.rawConfig.interface} (${currentStatus}, ${Math.round(elapsedMs / 1000)}s)...`,
+            );
+          }
+        },
+      });
+
+      this.log.info(`Interface ${this.rawConfig.interface} is now up`);
+    } else {
+      throw new Error(
+        `Interface ${this.rawConfig.interface} is ${status} — use --wait to poll for link-up`,
+      );
+    }
+
+    // ── Build resolved config ────────────────────────────────────
+    this.config = {
+      interface: this.rawConfig.interface,
+      bootFile: this.rawConfig.bootFile,
+      tftpRoot: this.rawConfig.tftpRoot,
+      mode,
+      serverIP: this.rawConfig.serverIP ?? ifaceConfig.address as IPv4,
+      subnetMask: this.rawConfig.subnetMask ?? ifaceConfig.netmask as IPv4,
+      router: this.rawConfig.router ?? this.rawConfig.serverIP ?? ifaceConfig.address as IPv4,
+      tftpServer: this.rawConfig.tftpServer ?? this.rawConfig.serverIP ?? ifaceConfig.address as IPv4,
+      dnsServers: this.rawConfig.dnsServers ?? [],
+      dhcp: this.rawConfig.dhcp,
+      tftpPort: this.rawConfig.tftpPort ?? 69,
+      maxTransfers: this.rawConfig.maxTransfers ?? 16,
+      allowWrite: this.rawConfig.allowWrite ?? false,
+      reservations: this.rawConfig.reservations ?? [],
+      healthPort: this.rawConfig.healthPort ?? 9470,
+      httpPort: this.rawConfig.httpPort ?? this.rawConfig.http?.port ?? 0,
+      http: this.rawConfig.http,
+      mdnsAddress: (this.rawConfig.mdnsAddress ?? this.rawConfig.serverIP) as string | undefined,
+      bootFiles: this.rawConfig.bootFiles,
+      hooks: this.rawConfig.hooks,
+      bootp: this.rawConfig.bootp,
+      followSymlinks: this.rawConfig.followSymlinks,
+    };
+
+    this.interfaceState = 'up';
 
     this.log.info(
       `Starting PXE daemon on ${this.config.interface} ` +
@@ -126,11 +161,11 @@ export class PXEServer extends EventEmitter {
       `tftp=${this.config.tftpRoot})`,
     );
 
-    // Start TFTP server
+    // Start TFTP server (pass pre-resolved config)
     this.tftpServer = new TFTPServer({
       port: this.config.tftpPort,
       root: this.config.tftpRoot,
-      interface: this.config.interface,
+      iface: ifaceConfig,
       maxTransfers: this.config.maxTransfers,
       allowWrite: this.config.allowWrite,
       hooks: this.config.hooks,
@@ -273,6 +308,10 @@ export class PXEServer extends EventEmitter {
     }
 
     this.running = true;
+
+    // Start passive interface monitor
+    this.startInterfaceMonitor();
+
     this.log.info('PXE daemon ready');
     this.emit('ready');
 
@@ -286,6 +325,11 @@ export class PXEServer extends EventEmitter {
     if (!this.running) return;
 
     this.log.info('Shutting down PXE daemon...');
+
+    if (this.interfaceMonitor) {
+      clearInterval(this.interfaceMonitor);
+      this.interfaceMonitor = null;
+    }
 
     if (this.mdns) {
       this.mdns.stop();
@@ -334,6 +378,51 @@ export class PXEServer extends EventEmitter {
     return this.tftpServer;
   }
 
+  // ── Interface monitor ──────────────────────────────────────────
+
+  /**
+   * Start a passive interface monitor that logs warnings when the
+   * interface goes down or its IP changes. No automatic recovery —
+   * just surfaces the issue via logging and the health endpoint.
+   */
+  private startInterfaceMonitor(): void {
+    if (this.interfaceMonitor) return;
+
+    this.interfaceMonitor = setInterval(() => {
+      const status = getInterfaceStatus(this.config.interface);
+
+      if (status === 'down' || status === 'missing') {
+        if (this.interfaceState !== status) {
+          this.log.warn(`Interface ${this.config.interface} is ${status} — PXE services degraded`);
+          this.interfaceState = status;
+        }
+        return;
+      }
+
+      // Interface is up — check for IP change
+      try {
+        const current = getInterfaceConfig(this.config.interface);
+        if (current.address !== this.config.serverIP) {
+          if (this.interfaceState !== 'ip-changed') {
+            this.log.warn(
+              `Interface ${this.config.interface} IP changed: ` +
+              `${this.config.serverIP} → ${current.address} — restart required`,
+            );
+            this.interfaceState = 'ip-changed';
+          }
+        } else if (this.interfaceState !== 'up') {
+          this.log.info(`Interface ${this.config.interface} recovered`);
+          this.interfaceState = 'up';
+        }
+      } catch {
+        // Race: went back down between status check and config read
+        if (this.interfaceState !== 'down') {
+          this.interfaceState = 'down';
+        }
+      }
+    }, 30_000);
+  }
+
   // ── Health status ────────────────────────────────────────────────
 
   /**
@@ -341,10 +430,15 @@ export class PXEServer extends EventEmitter {
    */
   private getHealthStatus(): HealthStatus {
     const status: HealthStatus = {
-      status: this.running ? 'ok' : 'down',
+      status: this.running ? (this.interfaceState === 'up' ? 'ok' : 'degraded') : 'down',
       uptime: process.uptime(),
       pid: process.pid,
       version: _version,
+      interface: {
+        name: this.config.interface,
+        status: this.interfaceState,
+        address: this.config.serverIP,
+      },
     };
 
     if (this.tftpServer) {

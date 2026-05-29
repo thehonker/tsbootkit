@@ -25,7 +25,7 @@ import { EventEmitter } from 'node:events';
 import { createLogger } from '../shared/logger.mjs';
 import { onShutdown } from '../shared/signals.mjs';
 import { IPv4, MAC } from '../shared/types.mjs';
-import { getInterfaceConfig, generateRandomIP, ipv4ToInt } from '../shared/network.mjs';
+import { generateRandomIP, ipv4ToInt } from '../shared/network.mjs';
 
 import {
   DHCPServerConfig,
@@ -104,19 +104,25 @@ export class DHCPServer extends EventEmitter {
 
   /**
    * Start the DHCP server.
+   *
+   * The caller must ensure serverIP, subnetMask, router, and tftpServer
+   * are set in the config — interface resolution is the caller's
+   * responsibility.
    */
   async start(): Promise<void> {
-    // Resolve interface config (deferred from constructor)
-    const ifaceConfig = getInterfaceConfig(this.rawConfig.interface);
     const config = this.rawConfig;
+
+    if (!config.serverIP || !config.subnetMask) {
+      throw new Error('DHCP server requires serverIP and subnetMask — interface must be resolved before start()');
+    }
 
     this.config = {
       interface: config.interface,
       bootFile: config.bootFile,
-      serverIP: config.serverIP ?? ifaceConfig.address,
-      subnetMask: config.subnetMask ?? ifaceConfig.netmask,
-      router: config.router ?? config.serverIP ?? ifaceConfig.address,
-      tftpServer: config.tftpServer ?? config.serverIP ?? ifaceConfig.address,
+      serverIP: config.serverIP,
+      subnetMask: config.subnetMask,
+      router: config.router ?? config.serverIP,
+      tftpServer: config.tftpServer ?? config.serverIP,
       dnsServers: config.dnsServers ?? [],
       leaseTime: config.leaseTime ?? DEFAULT_LEASE_TIME,
       answerAll: config.answerAll ?? false,

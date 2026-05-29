@@ -66,6 +66,10 @@ export interface PXEServerConfig {
   bootp?: import('../config.mts').BOOTPConfig;
   /** Whether to follow symbolic links in TFTP/HTTP file serving (default false). */
   followSymlinks?: boolean;
+  /** Whether to wait for the interface to come up before starting (default false). */
+  wait?: boolean;
+  /** Maximum seconds to wait for the interface (0 = wait forever, default 0). Only meaningful when wait is true. */
+  waitTimeout?: number;
 }
 
 // ─── PXE server events (reserved for future use) ────────────────────

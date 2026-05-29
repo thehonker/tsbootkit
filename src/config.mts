@@ -162,6 +162,10 @@ export interface TSBootKitConfig {
   hooks?: import('./shared/hooks.mjs').HookConfig[];
   /** Whether to follow symbolic links in TFTP/HTTP file serving (default false). */
   followSymlinks?: boolean;
+  /** Whether to wait for the interface to come up before starting (default false). */
+  wait?: boolean;
+  /** Maximum seconds to wait for the interface (0 = wait forever, default 0). */
+  waitTimeout?: number;
   /** Directory that the config file was loaded from (for resolving relative paths). Set by loadConfig(). */
   configDir?: string;
 }
@@ -190,6 +194,8 @@ interface RawConfig {
   bootFiles?: BootFileMap;
   hooks?: import('./shared/hooks.mjs').HookConfig[];
   followSymlinks?: boolean;
+  wait?: boolean;
+  waitTimeout?: number;
   reservations?: Array<{
     mac?: string;
     ip?: string;
@@ -401,6 +407,8 @@ export function validateConfig(raw: RawConfig, configDir?: string): TSBootKitCon
     bootFiles: raw.bootFiles,
     hooks: raw.hooks,
     followSymlinks: raw.followSymlinks,
+    wait: raw.wait,
+    waitTimeout: raw.waitTimeout,
     configDir,
     reservations,
   };

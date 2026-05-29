@@ -7,7 +7,7 @@
  */
 
 import os from 'node:os';
-import { IPv4, MAC, InterfaceConfig, NetworkCIDR } from './types.mjs';
+import { IPv4, MAC, InterfaceConfig, InterfaceStatus, NetworkCIDR } from './types.mjs';
 
 /**
  * Brand a string as IPv4. Does NOT validate — use `isValidIPv4` for that.
@@ -82,6 +82,97 @@ export function computeCIDR(address: IPv4, netmask: IPv4): NetworkCIDR {
     prefix,
     broadcast: intToIPv4(broadcastInt),
   };
+}
+
+/**
+ * Check whether a network interface exists and has a usable IPv4 address.
+ *
+ * Uses only `os.networkInterfaces()` — no platform-specific calls.
+ * - `'up'`      : interface has a non-internal IPv4 address
+ * - `'down'`    : interface exists but has no usable IPv4 address
+ * - `'missing'` : interface does not appear in `os.networkInterfaces()` at all
+ */
+export function getInterfaceStatus(iface: string): InterfaceStatus {
+  const interfaces = os.networkInterfaces();
+  const entries = interfaces[iface];
+
+  if (!entries || entries.length === 0) {
+    return 'missing';
+  }
+
+  const hasIPv4 = entries.some((e) => e.family === 'IPv4' && !e.internal);
+  return hasIPv4 ? 'up' : 'down';
+}
+
+/**
+ * Poll until a network interface becomes usable.
+ *
+ * Resolves with the `InterfaceConfig` once the interface has a usable
+ * IPv4 address. If `timeoutMs` is set and expires, rejects with an
+ * error. If `timeoutMs` is 0 (default), waits indefinitely.
+ *
+ * @param iface     Interface name to wait for
+ * @param options   timeoutMs (0 = forever), intervalMs (default 2000)
+ * @param onPoll    Optional callback invoked each poll cycle for logging
+ */
+export function waitForInterface(
+  iface: string,
+  options?: { timeoutMs?: number; intervalMs?: number; onPoll?: (status: InterfaceStatus, elapsedMs: number) => void },
+): Promise<InterfaceConfig> {
+  const intervalMs = options?.intervalMs ?? 2000;
+  const timeoutMs = options?.timeoutMs ?? 0;
+  const onPoll = options?.onPoll;
+
+  return new Promise<InterfaceConfig>((resolve, reject) => {
+    const start = Date.now();
+
+    const timer = setInterval(() => {
+      const status = getInterfaceStatus(iface);
+      const elapsed = Date.now() - start;
+
+      onPoll?.(status, elapsed);
+
+      if (status === 'up') {
+        clearInterval(timer);
+        if (timeoutRef) clearTimeout(timeoutRef);
+        try {
+          resolve(getInterfaceConfig(iface));
+        } catch {
+          // Race: went back down between status check and config read — keep polling
+        }
+        return;
+      }
+
+      // Timeout check (only if timeoutMs > 0)
+      if (timeoutMs > 0 && elapsed >= timeoutMs) {
+        clearInterval(timer);
+        reject(new Error(
+          `Timed out waiting for interface ${iface} after ${Math.round(elapsed / 1000)}s`,
+        ));
+      }
+    }, intervalMs);
+
+    // Overall timeout (only if timeoutMs > 0)
+    let timeoutRef: ReturnType<typeof setTimeout> | undefined;
+    if (timeoutMs > 0) {
+      timeoutRef = setTimeout(() => {
+        clearInterval(timer);
+        reject(new Error(
+          `Timed out waiting for interface ${iface} after ${timeoutMs / 1000}s`,
+        ));
+      }, timeoutMs);
+    }
+
+    // Check immediately on first call (don't wait one interval)
+    const initialStatus = getInterfaceStatus(iface);
+    if (initialStatus === 'up') {
+      clearInterval(timer);
+      if (timeoutRef) clearTimeout(timeoutRef);
+      resolve(getInterfaceConfig(iface));
+      return;
+    }
+    onPoll?.(initialStatus, 0);
+  });
 }
 
 /**

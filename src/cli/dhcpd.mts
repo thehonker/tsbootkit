@@ -10,6 +10,7 @@ import { DHCPServer } from '../dhcp/server.mjs';
 import { loadConfig } from '../config.mjs';
 import { createLogger, verboseCountToLevel, type TsbootkitLevel } from '../shared/logger.mjs';
 import { setProcessTitle, writePIDFile, installSignalHandlers } from '../shared/signals.mjs';
+import { getInterfaceConfig, getInterfaceStatus, waitForInterface } from '../shared/network.mjs';
 import type { IPv4, MAC } from '../shared/types.mjs';
 
 async function main(): Promise<void> {
@@ -62,6 +63,16 @@ async function main(): Promise<void> {
       type: 'count',
       description: 'Increase verbosity (-v info, -vv debug, -vvv trace)',
     })
+    .option('wait', {
+      type: 'boolean',
+      default: false,
+      description: 'Wait for the interface to come up before starting',
+    })
+    .option('wait-timeout', {
+      type: 'number',
+      default: 0,
+      description: 'Max seconds to wait for the interface (0 = forever, requires --wait)',
+    })
     .version()
     .help()
     .argv;
@@ -95,11 +106,19 @@ async function main(): Promise<void> {
 
     logger.info(`Loaded config from ${argv.config}: ${config.reservations.length} reservation(s)`);
 
+    // Resolve interface if serverIP/subnetMask weren't provided by config
+    const shouldWait = config.wait ?? (argv.wait as boolean);
+    const waitTimeout = config.waitTimeout ?? (argv.waitTimeout as number) ?? 0;
+    let ifaceConfig = undefined;
+    if (!config.serverIP || !config.subnetMask) {
+      ifaceConfig = await resolveInterfaceForStandalone(config.interface, logger, shouldWait, waitTimeout);
+    }
+
     const server = new DHCPServer({
       interface: config.interface,
       bootFile: config.bootFile,
-      serverIP: config.serverIP,
-      subnetMask: config.subnetMask,
+      serverIP: config.serverIP ?? ifaceConfig?.address,
+      subnetMask: config.subnetMask ?? ifaceConfig?.netmask,
       tftpServer: config.tftpServer,
       router: config.router,
       dnsServers: config.dnsServers,
@@ -127,9 +146,16 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    // Resolve interface (with optional wait)
+    const shouldWait = argv.wait as boolean;
+    const waitTimeout = argv.waitTimeout as number;
+    const ifaceConfig = await resolveInterfaceForStandalone(iface, logger, shouldWait, waitTimeout);
+
     const server = new DHCPServer({
       interface: iface,
       bootFile: bootfile,
+      serverIP: ifaceConfig.address,
+      subnetMask: ifaceConfig.netmask,
       tftpServer: argv.tftpServer as IPv4 | undefined,
       router: argv.gateway as IPv4 | undefined,
       dnsServers: (argv.dns ?? []) as IPv4[],
@@ -145,3 +171,40 @@ main().catch((err: Error) => {
   process.stderr.write(`Fatal: ${err.message}\n`);
   process.exit(1);
 });
+
+/**
+ * Resolve a network interface for standalone CLI use.
+ * Handles the wait/poll logic that PXEServer does internally.
+ */
+async function resolveInterfaceForStandalone(
+  iface: string,
+  logger: ReturnType<typeof createLogger>,
+  wait: boolean,
+  waitTimeout: number,
+) {
+  const status = getInterfaceStatus(iface);
+
+  if (status === 'up') {
+    return getInterfaceConfig(iface);
+  }
+
+  if (!wait) {
+    throw new Error(`Interface ${iface} is ${status} — use --wait to poll for link-up`);
+  }
+
+  logger.info(`Interface ${iface} is ${status}, waiting for it to come up...`);
+
+  let lastLogTime = 0;
+  const ifaceConfig = await waitForInterface(iface, {
+    timeoutMs: waitTimeout * 1000,
+    onPoll: (currentStatus, elapsedMs) => {
+      if (elapsedMs - lastLogTime >= 10_000) {
+        lastLogTime = elapsedMs;
+        logger.info(`Still waiting for ${iface} (${currentStatus}, ${Math.round(elapsedMs / 1000)}s)...`);
+      }
+    },
+  });
+
+  logger.info(`Interface ${iface} is now up`);
+  return ifaceConfig;
+}

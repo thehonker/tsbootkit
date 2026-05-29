@@ -6,6 +6,9 @@ export type IPv4 = string & { readonly __brand: unique symbol };
 /** MAC address as a colon-separated hex string (e.g. "aa:bb:cc:dd:ee:ff"). */
 export type MAC = string & { readonly __brand: unique symbol };
 
+/** Network interface usability status. */
+export type InterfaceStatus = 'up' | 'down' | 'missing';
+
 /** A network interface's IP configuration. */
 export interface InterfaceConfig {
   /** Interface name (e.g. "eth0"). */

@@ -108,6 +108,11 @@ tftpRoot: /tftpboot            # TFTP server root directory
 # Default: false — symlinks pointing outside the root directory are blocked.
 # followSymlinks: false
 
+# ── Interface wait ────────────────────────────────────────────
+
+# wait: false                   # Wait for the interface to come up before starting?
+# waitTimeout: 0                # Max seconds to wait (0 = forever, requires wait: true)
+
 # ── Logging ─────────────────────────────────────────────────────
 
 # logging:
@@ -287,8 +292,8 @@ npx tsbootkit-pxed <interface> <bootfile> <tftproot> [options]
 | `--mdns-address <ip>` | server IP | mDNS address to advertise (empty = disabled) |
 | `--pid-file <path>` | — | Write PID to file (stale PID auto-cleaned) |
 | `-v, --verbose` | — | Increase verbosity (`-v` debug, `-vv` trace) |
-
-### `tsbootkit-tftpd` — TFTP Server
+| `--wait` | `false` | Wait for the interface to come up before starting |
+| `--wait-timeout <sec>` | `0` | Max seconds to wait for interface (0 = forever, requires `--wait`) | — TFTP Server
 
 ```bash
 npx tsbootkit-tftpd --config tsbootkit.yaml
@@ -321,6 +326,8 @@ npx tsbootkit-dhcpd <interface> <bootfile> [options]
 | `--answer-all` | `false` | Respond to non-PXE DHCP requests |
 | `--pid-file <path>` | — | Write PID to file (stale PID auto-cleaned) |
 | `-v, --verbose` | — | Increase verbosity |
+| `--wait` | `false` | Wait for the interface to come up before starting |
+| `--wait-timeout <sec>` | `0` | Max seconds to wait for interface (0 = forever, requires `--wait`) |
 
 ### `tsbootkit-bootpd` — BOOTP Server
 
@@ -337,6 +344,8 @@ npx tsbootkit-bootpd <interface> <bootfile> [options]
 | `--dns <ip>...` | — | DNS server IP(s) |
 | `--pid-file <path>` | — | Write PID to file (stale PID auto-cleaned) |
 | `-v, --verbose` | — | Increase verbosity |
+| `--wait` | `false` | Wait for the interface to come up before starting |
+| `--wait-timeout <sec>` | `0` | Max seconds to wait for interface (0 = forever, requires `--wait`) |
 
 ### Config vs. CLI Flags
 
@@ -485,7 +494,7 @@ The dashboard runs on the health check server — no extra port needed.
 curl http://localhost:9470/health
 ```
 
-Returns JSON with status (`ok`/`down`/degraded`), uptime, active transfers, DHCP leases. Returns 503 when status is `down`.
+Returns JSON with status (`ok`/`degraded`/`down`), uptime, active transfers, DHCP leases. Includes an `interface` field with the interface name, status (`up`/`down`/`missing`/`ip-changed`), and address. Returns 503 when status is `down` or `degraded`.
 
 ## Docker
 

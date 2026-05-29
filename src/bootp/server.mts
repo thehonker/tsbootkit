@@ -16,7 +16,7 @@ import os from 'node:os';
 import { createLogger } from '../shared/logger.mjs';
 import { onShutdown } from '../shared/signals.mjs';
 import { IPv4, MAC } from '../shared/types.mjs';
-import { getInterfaceConfig, generateRandomIP } from '../shared/network.mjs';
+import { generateRandomIP } from '../shared/network.mjs';
 import { parseDHCPPacket, DHCPProtocolError } from '../dhcp/protocol.mjs';
 
 import { BOOTPServerConfig, BOOTP_SERVER_PORT, BOOTP_CLIENT_PORT } from './types.mjs';
@@ -54,7 +54,8 @@ export interface BOOTPServerEvents {
 // ─── BOOTP Server ──────────────────────────────────────────────────
 
 export class BOOTPServer extends EventEmitter {
-  private readonly config: Omit<Required<BOOTPServerConfig>, 'bootFiles' | 'hooks' | 'allocationLifetime'> & { bootFiles?: BootFileMap; hooks: import('../shared/hooks.mjs').HookConfig[]; allocationLifetime?: number };
+  private readonly rawConfig: BOOTPServerConfig;
+  private config!: Omit<Required<BOOTPServerConfig>, 'bootFiles' | 'hooks' | 'allocationLifetime'> & { bootFiles?: BootFileMap; hooks: import('../shared/hooks.mjs').HookConfig[]; allocationLifetime?: number };
   private socket: dgram.Socket | null = null;
   private readonly allocatedIPs = new Set<IPv4>();
   private readonly allocations = new Map<MAC, Allocation>();
@@ -69,21 +70,7 @@ export class BOOTPServer extends EventEmitter {
   constructor(config: BOOTPServerConfig) {
     super();
 
-    const ifaceConfig = getInterfaceConfig(config.interface);
-
-    this.config = {
-      interface: config.interface,
-      bootFile: config.bootFile,
-      serverIP: config.serverIP ?? ifaceConfig.address,
-      subnetMask: config.subnetMask ?? ifaceConfig.netmask,
-      router: config.router ?? config.serverIP ?? ifaceConfig.address,
-      tftpServer: config.tftpServer ?? config.serverIP ?? ifaceConfig.address,
-      dnsServers: config.dnsServers ?? [],
-      bootFiles: config.bootFiles,
-      hooks: config.hooks ?? [],
-      allocationLifetime: config.allocationLifetime ?? BOOTPServer.DEFAULT_ALLOCATION_LIFETIME,
-    };
-
+    this.rawConfig = config;
     this.hostname = os.hostname();
     this.log = createLogger('bootpd');
   }
@@ -91,6 +78,25 @@ export class BOOTPServer extends EventEmitter {
   // ── Lifecycle ───────────────────────────────────────────────────
 
   async start(): Promise<void> {
+    const config = this.rawConfig;
+
+    if (!config.serverIP || !config.subnetMask) {
+      throw new Error('BOOTP server requires serverIP and subnetMask — interface must be resolved before start()');
+    }
+
+    this.config = {
+      interface: config.interface,
+      bootFile: config.bootFile,
+      serverIP: config.serverIP,
+      subnetMask: config.subnetMask,
+      router: config.router ?? config.serverIP,
+      tftpServer: config.tftpServer ?? config.serverIP,
+      dnsServers: config.dnsServers ?? [],
+      bootFiles: config.bootFiles,
+      hooks: config.hooks ?? [],
+      allocationLifetime: config.allocationLifetime ?? BOOTPServer.DEFAULT_ALLOCATION_LIFETIME,
+    };
+
     this.socket = dgram.createSocket('udp4');
 
     this.socket.on('message', (msg: Buffer) => {

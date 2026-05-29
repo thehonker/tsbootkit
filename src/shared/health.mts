@@ -29,6 +29,11 @@ export interface HealthStatus {
   uptime: number;
   pid: number;
   version: string;
+  interface?: {
+    name: string;
+    status: 'up' | 'down' | 'missing' | 'ip-changed';
+    address: string;
+  };
   tftp?: {
     activeTransfers: number;
     totalBytes: number;

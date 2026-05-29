@@ -64,6 +64,15 @@ tftpRoot: /tftpboot
 # Set to true only if you trust the contents of tftpRoot.
 # followSymlinks: false
 
+# ── Interface wait ──────────────────────────────────────────────────
+
+# If the interface is down at startup, wait for it to come up instead
+# of exiting immediately. Useful for USB-Ethernet adapters that may be
+# plugged in after the daemon starts.
+#
+# wait: false              # Wait for the interface to come up before starting?
+# waitTimeout: 0            # Max seconds to wait (0 = forever, requires wait: true)
+
 # ── Logging ─────────────────────────────────────────────────────────
 
 # logging:

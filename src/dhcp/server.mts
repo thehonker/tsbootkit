@@ -161,7 +161,9 @@ export class DHCPServer extends EventEmitter {
         reject(err);
       });
 
-      this.socket!.bind(DHCP_SERVER_PORT, this.config.serverIP);
+      // Bind to 0.0.0.0 so we receive broadcast DHCP requests (255.255.255.255).
+      // Binding to a specific IP filters out broadcasts on macOS.
+      this.socket!.bind(DHCP_SERVER_PORT);
     }).then(() => {
       // Start lease garbage collection
       this.startGC();

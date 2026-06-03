@@ -128,7 +128,9 @@ export class BOOTPServer extends EventEmitter {
         reject(err);
       });
 
-      this.socket!.bind(BOOTP_SERVER_PORT, this.config.serverIP);
+      // Bind to 0.0.0.0 so we receive broadcast BOOTP requests (255.255.255.255).
+      // Binding to a specific IP filters out broadcasts on macOS.
+      this.socket!.bind(BOOTP_SERVER_PORT);
     }).then(() => {
       this.startGC();
       onShutdown(() => this.stop());

@@ -98,6 +98,7 @@ export class BOOTPServer extends EventEmitter {
     };
 
     this.socket = dgram.createSocket('udp4');
+    this.socket.setBroadcast(true);
 
     this.socket.on('message', (msg: Buffer) => {
       this.handleMessage(msg).catch((err: Error) => {

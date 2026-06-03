@@ -131,6 +131,7 @@ export class DHCPServer extends EventEmitter {
     };
 
     this.socket = dgram.createSocket('udp4');
+    this.socket.setBroadcast(true);
 
     this.socket.on('message', (msg: Buffer, rinfo: dgram.RemoteInfo) => {
       this.handleMessage(msg, rinfo).catch((err: Error) => {

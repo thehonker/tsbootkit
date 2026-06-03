@@ -98,7 +98,6 @@ export class BOOTPServer extends EventEmitter {
     };
 
     this.socket = dgram.createSocket('udp4');
-    this.socket.setBroadcast(true);
 
     this.socket.on('message', (msg: Buffer) => {
       this.handleMessage(msg).catch((err: Error) => {
@@ -116,6 +115,7 @@ export class BOOTPServer extends EventEmitter {
 
     return new Promise<void>((resolve, reject) => {
       this.socket!.on('listening', () => {
+        this.socket!.setBroadcast(true);
         this.log.info(
           `BOOTP server listening on ${this.config.serverIP}:${BOOTP_SERVER_PORT}, ` +
           `boot=${this.config.bootFile}, tftp=${this.config.tftpServer}`,

@@ -16,7 +16,7 @@ import os from 'node:os';
 import { createLogger } from '../shared/logger.mjs';
 import { onShutdown } from '../shared/signals.mjs';
 import { IPv4, MAC } from '../shared/types.mjs';
-import { generateRandomIP } from '../shared/network.mjs';
+import { generateRandomIP, computeCIDR } from '../shared/network.mjs';
 import { parseDHCPPacket, DHCPProtocolError } from '../dhcp/protocol.mjs';
 
 import { BOOTPServerConfig, BOOTP_SERVER_PORT, BOOTP_CLIENT_PORT } from './types.mjs';
@@ -58,6 +58,8 @@ export class BOOTPServer extends EventEmitter {
   private config!: Omit<Required<BOOTPServerConfig>, 'bootFiles' | 'hooks' | 'allocationLifetime'> & { bootFiles?: BootFileMap; hooks: import('../shared/hooks.mjs').HookConfig[]; allocationLifetime?: number };
   private socket: dgram.Socket | null = null;
   private readonly allocatedIPs = new Set<IPv4>();
+  /** Subnet-directed broadcast address for sending replies. */
+  private broadcastAddr: IPv4 = '255.255.255.255' as IPv4;
   private readonly allocations = new Map<MAC, Allocation>();
   private readonly reservations = new Map<MAC, BOOTPReservation>();
   private gcTimer: ReturnType<typeof setInterval> | null = null;
@@ -96,6 +98,11 @@ export class BOOTPServer extends EventEmitter {
       hooks: config.hooks ?? [],
       allocationLifetime: config.allocationLifetime ?? BOOTPServer.DEFAULT_ALLOCATION_LIFETIME,
     };
+
+    // Compute the subnet-directed broadcast address.
+    // 255.255.255.255 silently fails on macOS when the socket is bound to 0.0.0.0.
+    const cidr = computeCIDR(this.config.serverIP, this.config.subnetMask);
+    this.broadcastAddr = cidr.broadcast;
 
     this.socket = dgram.createSocket('udp4');
 
@@ -269,7 +276,7 @@ export class BOOTPServer extends EventEmitter {
 
     const clientIP = packet.ciaddr;
     const useBroadcast = !clientIP || clientIP === '0.0.0.0';
-    const target = useBroadcast ? '255.255.255.255' : clientIP;
+    const target = useBroadcast ? this.broadcastAddr : clientIP;
 
     if (useBroadcast) {
       this.log.debug('Broadcasting BOOTP reply (client has no IP)');

@@ -25,7 +25,7 @@ import { EventEmitter } from 'node:events';
 import { createLogger } from '../shared/logger.mjs';
 import { onShutdown } from '../shared/signals.mjs';
 import { IPv4, MAC } from '../shared/types.mjs';
-import { generateRandomIP, ipv4ToInt } from '../shared/network.mjs';
+import { generateRandomIP, ipv4ToInt, computeCIDR } from '../shared/network.mjs';
 
 import {
   DHCPServerConfig,
@@ -91,6 +91,8 @@ export class DHCPServer extends EventEmitter {
   private gcTimer: ReturnType<typeof setInterval> | null = null;
   private readonly log;
   private readonly allocatedIPs = new Set<IPv4>();
+  /** Subnet-directed broadcast address for sending replies. */
+  private broadcastAddr: IPv4 = '255.255.255.255' as IPv4;
   /** Static MAC → reservation map. */
   private readonly reservations = new Map<MAC, DHCPReservation>();
 
@@ -129,6 +131,12 @@ export class DHCPServer extends EventEmitter {
       bootFiles: config.bootFiles,
       hooks: config.hooks ?? [],
     };
+
+    // Compute the subnet-directed broadcast address.
+    // 255.255.255.255 silently fails on macOS when the socket is bound to 0.0.0.0
+    // because the kernel can't determine the egress interface.
+    const cidr = computeCIDR(this.config.serverIP, this.config.subnetMask);
+    this.broadcastAddr = cidr.broadcast;
 
     this.socket = dgram.createSocket('udp4');
 
@@ -450,7 +458,7 @@ export class DHCPServer extends EventEmitter {
   private sendReply(reply: Buffer): void {
     if (!this.socket) return;
 
-    this.socket.send(reply, DHCP_CLIENT_PORT, '255.255.255.255', (err) => {
+    this.socket.send(reply, DHCP_CLIENT_PORT, this.broadcastAddr, (err) => {
       if (err) {
         this.log.error(`Failed to send DHCP reply: ${err.message}`);
       }

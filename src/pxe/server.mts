@@ -94,6 +94,21 @@ export class PXEServer extends EventEmitter {
     }
 
     const mode = this.rawConfig.mode ?? PXEMode.DHCP;
+    this.interfaceState = 'down';
+
+    // ── Start health/dashboard server immediately ──────────────────
+    // Bring up the dashboard before interface resolution so operators
+    // can monitor progress while waiting for a missing interface.
+    if ((this.rawConfig.healthPort ?? 9470) > 0) {
+      this.healthServer = new HealthCheckServer({
+        port: this.rawConfig.healthPort ?? 9470,
+        getStatus: () => this.getHealthStatus(),
+      });
+
+      registerDashboardRoutes(this.healthServer, () => this.getDashboardStatus());
+
+      await this.healthServer.start();
+    }
 
     // ── Resolve interface ────────────────────────────────────────
     const status = getInterfaceStatus(this.rawConfig.interface);
@@ -269,19 +284,6 @@ export class PXEServer extends EventEmitter {
 
     await this.ipServer.start();
 
-    // Start health check server (if enabled)
-    if (this.config.healthPort > 0) {
-      this.healthServer = new HealthCheckServer({
-        port: this.config.healthPort,
-        getStatus: () => this.getHealthStatus(),
-      });
-
-      // Register dashboard routes on the health check HTTP server
-      registerDashboardRoutes(this.healthServer, () => this.getDashboardStatus());
-
-      await this.healthServer.start();
-    }
-
     // Start HTTP fallback server (if enabled)
     if (this.config.httpPort > 0) {
       this.httpServer = new HTTPServer({
@@ -442,6 +444,21 @@ export class PXEServer extends EventEmitter {
    * Gather current health status for the health check endpoint.
    */
   private getHealthStatus(): HealthStatus {
+    // Before interface resolution, config isn't set yet — return early status
+    if (!this.config) {
+      return {
+        status: 'degraded',
+        uptime: process.uptime(),
+        pid: process.pid,
+        version: _version,
+        interface: {
+          name: this.rawConfig.interface,
+          status: this.interfaceState,
+          address: undefined as unknown as IPv4,
+        },
+      };
+    }
+
     const status: HealthStatus = {
       status: this.running ? (this.interfaceState === 'up' ? 'ok' : 'degraded') : 'down',
       uptime: process.uptime(),
@@ -485,6 +502,24 @@ export class PXEServer extends EventEmitter {
    * Gather full status for the dashboard API.
    */
   private getDashboardStatus(): DashboardStatus {
+    // Before interface resolution, config isn't set yet — return early status
+    if (!this.config) {
+      return {
+        status: 'degraded',
+        uptime: process.uptime(),
+        pid: process.pid,
+        version: _version,
+        mode: (this.rawConfig.mode ?? PXEMode.DHCP) === PXEMode.BOOTP ? 'bootp' : 'dhcp',
+        interface: this.rawConfig.interface,
+        bootFile: this.rawConfig.bootFile,
+        tftp: null,
+        dhcp: null,
+        bootp: null,
+        http: null,
+        mdns: null,
+      };
+    }
+
     const status: DashboardStatus = {
       status: this.running ? 'ok' : 'down',
       uptime: process.uptime(),

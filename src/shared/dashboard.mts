@@ -29,6 +29,18 @@ export interface DashboardLease {
   uuid?: string;
 }
 
+export interface DashboardHTTPTransfer {
+  id: number;
+  method: string;
+  path: string;
+  clientIP: string;
+  state: string;
+  bytesSent: number;
+  fileSize: number;
+  startedAt: number;
+  statusCode?: number;
+}
+
 export interface DashboardReservation {
   mac: string;
   ip: string;
@@ -58,6 +70,8 @@ export interface DashboardStatus {
   } | null;
   http: {
     enabled: boolean;
+    activeTransfers: number;
+    transfers: DashboardHTTPTransfer[];
   } | null;
   mdns: {
     enabled: boolean;
@@ -141,6 +155,7 @@ h1{font-size:20px;color:#58a6ff;margin-bottom:4px}
 .badge-wrq{background:#6e5b14;color:#d29922}
 .badge-rrq{background:#0d419d;color:#58a6ff}
 .badge-state{background:#21262d;color:#8b949e}
+.badge-http{background:#0d419d;color:#58a6ff}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:#8b949e;font-weight:500;padding:8px 4px;border-bottom:1px solid #30363d}
 td{padding:8px 4px;border-bottom:1px solid #21262d}
@@ -158,6 +173,8 @@ td{padding:8px 4px;border-bottom:1px solid #21262d}
 <div id="transfers"></div>
 <h2 style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">DHCP Leases</h2>
 <div id="leases"></div>
+<h2 style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">HTTP Transfers</h2>
+<div id="http-transfers"></div>
 <h2 style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Reservations</h2>
 <div id="reservations"></div>
 <div class="refresh" id="refresh"></div>
@@ -181,7 +198,7 @@ function refresh(){
     if(data.tftp)stats+='<div class="stat"><span class="label">TFTP</span><span class="value">'+data.tftp.activeTransfers+' transfers</span></div>';
     if(data.dhcp)stats+='<div class="stat"><span class="label">DHCP</span><span class="value">'+data.dhcp.activeLeases+' leases</span></div>';
     if(data.bootp)stats+='<div class="stat"><span class="label">BOOTP</span><span class="value">'+data.bootp.allocated+' allocated</span></div>';
-    if(data.http)stats+='<div class="stat"><span class="label">HTTP</span><span class="value">'+badge('enabled','ok')+'</span></div>';
+    if(data.http)stats+='<div class="stat"><span class="label">HTTP</span><span class="value">'+(data.http.activeTransfers?data.http.activeTransfers+' transfers':badge('enabled','ok'))+'</span></div>';
     if(data.mdns)stats+='<div class="stat"><span class="label">mDNS</span><span class="value">'+badge('enabled','ok')+'</span></div>';
     stats+='</div>';
     document.getElementById('stats').innerHTML=stats;
@@ -196,6 +213,16 @@ function refresh(){
       t+='</table>';document.getElementById('transfers').innerHTML=t;
     }else{
       document.getElementById('transfers').innerHTML='<div class="empty">No active transfers</div>';
+    }
+    if(data.http&&data.http.transfers&&data.http.transfers.length>0){
+      let h='<table><tr><th>Path</th><th>Method</th><th>Client</th><th>Size</th><th>Status</th><th>State</th></tr>';
+      data.http.transfers.forEach(x=>{
+        h+='<tr><td>'+esc(x.path)+'</td><td>'+esc(x.method)+'</td><td>'+esc(x.clientIP)+'</td>';
+        h+='<td>'+fmt(x.bytesSent)+'</td><td>'+(x.statusCode?x.statusCode:'-')+'</td><td>'+badge(x.state,'state')+'</td></tr>';
+      });
+      h+='</table>';document.getElementById('http-transfers').innerHTML=h;
+    }else{
+      document.getElementById('http-transfers').innerHTML='<div class="empty">No HTTP transfers</div>';
     }
     if(data.dhcp&&data.dhcp.leases.length>0){
       let l='<table><tr><th>IP</th><th>MAC</th><th>Expires</th><th>UUID</th></tr>';

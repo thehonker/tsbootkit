@@ -1,6 +1,6 @@
 {
   "name": "tsbootkit",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "description": "TypeScript PXE/TFTP toolkit — TFTP, DHCP, BOOTP, and PXE servers",
   "type": "module",
   "license": "GPL-3.0",

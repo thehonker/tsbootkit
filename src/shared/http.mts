@@ -12,10 +12,43 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { EventEmitter } from 'node:events';
 
 import { lookup } from 'mime-types';
 import { createLogger } from './logger.mjs';
 import { onShutdown } from './signals.mjs';
+
+// ─── Transfer tracking ───────────────────────────────────────────────
+
+/** Tracks a single HTTP request from start to finish. */
+export interface HTTPTransfer {
+  /** Monotonically increasing transfer ID. */
+  id: number;
+  /** HTTP method (GET, HEAD). */
+  method: string;
+  /** Decoded URL path. */
+  path: string;
+  /** Client IP address. */
+  clientIP: string;
+  /** Current transfer state. */
+  state: 'active' | 'complete' | 'error';
+  /** Bytes sent to the client (content-length or range size). */
+  bytesSent: number;
+  /** Total file size in bytes. */
+  fileSize: number;
+  /** Timestamp when the request started. */
+  startedAt: number;
+  /** HTTP response status code. */
+  statusCode?: number;
+}
+
+// ─── Server events ────────────────────────────────────────────────────
+
+export interface HTTPServerEvents {
+  'transfer:start': (transfer: HTTPTransfer) => void;
+  'transfer:complete': (transfer: HTTPTransfer) => void;
+  'transfer:error': (transfer: HTTPTransfer) => void;
+}
 
 // ─── Config ────────────────────────────────────────────────────────
 
@@ -34,7 +67,7 @@ export interface HTTPServerConfig {
 
 // ─── Server ────────────────────────────────────────────────────────
 
-export class HTTPServer {
+export class HTTPServer extends EventEmitter {
   private readonly root: string;
   private readonly port: number;
   private readonly host: string;
@@ -43,7 +76,13 @@ export class HTTPServer {
   private server: http.Server | null = null;
   private readonly log;
 
+  // Transfer tracking
+  private nextTransferId = 1;
+  private readonly transfers = new Map<number, HTTPTransfer>();
+  private gcTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(config: HTTPServerConfig) {
+    super();
     this.root = path.resolve(config.root);
     this.port = config.port ?? 80;
     this.host = config.host ?? '0.0.0.0';
@@ -70,17 +109,25 @@ export class HTTPServer {
         resolve();
       });
     }).then(() => {
+      // Start transfer garbage collection
+      this.startGC();
       onShutdown(() => this.stop());
     });
   }
 
   async stop(): Promise<void> {
+    if (this.gcTimer) {
+      clearInterval(this.gcTimer);
+      this.gcTimer = null;
+    }
+
     if (!this.server) return;
 
     return new Promise<void>((resolve) => {
       this.server!.close(() => {
         this.log.info('HTTP server stopped.');
         this.server = null;
+        this.transfers.clear();
         resolve();
       });
     });
@@ -89,14 +136,43 @@ export class HTTPServer {
   // ── Request handling ─────────────────────────────────────────────
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
+    const decodedPath = decodeURIComponent(url.pathname);
+    const clientIP = req.socket.remoteAddress ?? 'unknown';
+
+    // Create transfer record
+    const transfer: HTTPTransfer = {
+      id: this.nextTransferId++,
+      method: req.method ?? 'GET',
+      path: decodedPath,
+      clientIP,
+      state: 'active',
+      bytesSent: 0,
+      fileSize: 0,
+      startedAt: Date.now(),
+    };
+    this.transfers.set(transfer.id, transfer);
+    this.emit('transfer:start', transfer);
+    this.log.info(`HTTP ${transfer.method} ${decodedPath} ← ${clientIP}`);
+
+    // Track response completion
+    res.on('finish', () => {
+      transfer.statusCode = res.statusCode;
+      transfer.state = (res.statusCode && res.statusCode >= 400) ? 'error' : 'complete';
+      this.emit(transfer.state === 'error' ? 'transfer:error' : 'transfer:complete', transfer);
+
+      if (transfer.state === 'error') {
+        this.log.warn(`HTTP ${transfer.method} ${transfer.path} → ${transfer.clientIP} (${transfer.statusCode})`);
+      } else {
+        this.log.info(`HTTP ${transfer.method} ${transfer.path} → ${transfer.clientIP} (${formatBytes(transfer.bytesSent)}, ${transfer.statusCode})`);
+      }
+    });
+
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405, { 'Content-Type': 'text/plain' });
       res.end('Method Not Allowed');
       return;
     }
-
-    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-    const decodedPath = decodeURIComponent(url.pathname);
 
     // Path traversal protection
     // Normalize root without trailing separator to avoid double-sep edge case
@@ -130,7 +206,7 @@ export class HTTPServer {
     }
 
     // Serve the file
-    await this.serveFile(filePath, req, res);
+    await this.serveFile(filePath, req, res, transfer);
   }
 
   // ── File serving ─────────────────────────────────────────────────
@@ -139,6 +215,7 @@ export class HTTPServer {
     filePath: string,
     req: http.IncomingMessage,
     res: http.ServerResponse,
+    transfer: HTTPTransfer,
   ): Promise<void> {
     let stat: fs.Stats;
     try {
@@ -166,7 +243,7 @@ export class HTTPServer {
       try {
         const indexStat = await fs.promises.stat(indexPath);
         if (indexStat.isFile()) {
-          await this.serveFile(indexPath, req, res);
+          await this.serveFile(indexPath, req, res, transfer);
           return;
         }
       } catch {
@@ -186,6 +263,7 @@ export class HTTPServer {
 
     const mimeType = lookup(filePath) || 'application/octet-stream';
     const isHead = req.method === 'HEAD';
+    transfer.fileSize = stat.size;
 
     // Range request support (for large firmware images, resumable downloads)
     const rangeHeader = req.headers.range;
@@ -201,6 +279,7 @@ export class HTTPServer {
 
       const { start, end } = range;
       const contentLength = end - start + 1;
+      transfer.bytesSent = contentLength;
 
       res.writeHead(206, {
         'Content-Type': mimeType,
@@ -217,11 +296,12 @@ export class HTTPServer {
         res.end();
       }
 
-      this.log.debug(`Range: ${start}-${end}/${stat.size} ${decodedPath(req)}`);
+      this.log.debug(`Range: ${start}-${end}/${stat.size} ${decodedPath(req)}, ${mimeType})`);
       return;
     }
 
     // Full response
+    transfer.bytesSent = stat.size;
     res.writeHead(200, {
       'Content-Type': mimeType,
       'Content-Length': stat.size,
@@ -236,7 +316,72 @@ export class HTTPServer {
       res.end();
     }
 
-    this.log.debug(`GET ${decodedPath(req)} (${stat.size} bytes, ${mimeType})`);
+    this.log.debug(`${stat.size} bytes, ${mimeType}`);
+  }
+
+  // ── Transfer GC ──────────────────────────────────────────────────
+
+  /** Maximum age of completed/error transfers before GC removes them (ms). */
+  private static readonly TRANSFER_GC_MS = 60_000;
+
+  private startGC(): void {
+    if (this.gcTimer) return;
+    this.gcTimer = setInterval(() => this.gcTransfers(), HTTPServer.TRANSFER_GC_MS);
+  }
+
+  private gcTransfers(): void {
+    const cutoff = Date.now() - HTTPServer.TRANSFER_GC_MS;
+    let cleaned = 0;
+    for (const [id, transfer] of this.transfers) {
+      if (transfer.state !== 'active' && transfer.startedAt < cutoff) {
+        this.transfers.delete(id);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      this.log.debug(`Garbage collected ${cleaned} completed HTTP transfer(s)`);
+    }
+  }
+
+  // ── Accessors ────────────────────────────────────────────────────
+
+  /** Number of currently active transfers. */
+  get activeTransfers(): number {
+    let count = 0;
+    for (const t of this.transfers.values()) {
+      if (t.state === 'active') count++;
+    }
+    return count;
+  }
+
+  /** Get a snapshot of all tracked transfers. */
+  getTransfers(): ReadonlyArray<Readonly<HTTPTransfer>> {
+    return Array.from(this.transfers.values());
+  }
+
+  /** Get a serializable snapshot of transfers for the dashboard API. */
+  getTransfersJSON(): Array<{
+    id: number;
+    method: string;
+    path: string;
+    clientIP: string;
+    state: string;
+    bytesSent: number;
+    fileSize: number;
+    startedAt: number;
+    statusCode?: number;
+  }> {
+    return Array.from(this.transfers.values()).map((t) => ({
+      id: t.id,
+      method: t.method,
+      path: t.path,
+      clientIP: t.clientIP,
+      state: t.state,
+      bytesSent: t.bytesSent,
+      fileSize: t.fileSize,
+      startedAt: t.startedAt,
+      statusCode: t.statusCode,
+    }));
   }
 
   // ── Range parsing ────────────────────────────────────────────────
@@ -291,4 +436,11 @@ function decodedPath(req: http.IncomingMessage): string {
   } catch {
     return req.url ?? '/';
   }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${(bytes / 1073741824).toFixed(2)} GB`;
 }

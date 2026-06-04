@@ -291,6 +291,19 @@ export class PXEServer extends EventEmitter {
         maxFileSize: this.config.http?.maxFileSize,
         followSymlinks: this.config.followSymlinks,
       });
+
+      this.httpServer.on('transfer:start', (transfer: import('../shared/http.mjs').HTTPTransfer) => {
+        this.log.debug(`HTTP transfer started: ${transfer.method} ${transfer.path} → ${transfer.clientIP}`);
+      });
+
+      this.httpServer.on('transfer:complete', (transfer: import('../shared/http.mjs').HTTPTransfer) => {
+        this.log.info(`HTTP transfer complete: ${transfer.path} → ${transfer.clientIP}`);
+      });
+
+      this.httpServer.on('transfer:error', (transfer: import('../shared/http.mjs').HTTPTransfer) => {
+        this.log.warn(`HTTP transfer error: ${transfer.path} → ${transfer.clientIP} (${transfer.statusCode})`);
+      });
+
       await this.httpServer.start();
     }
 
@@ -514,7 +527,11 @@ export class PXEServer extends EventEmitter {
     }
 
     if (this.httpServer) {
-      status.http = { enabled: true };
+      status.http = {
+        enabled: true,
+        activeTransfers: this.httpServer.activeTransfers,
+        transfers: this.httpServer.getTransfersJSON(),
+      };
     }
 
     if (this.mdns) {

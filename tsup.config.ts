@@ -23,4 +23,5 @@ export default defineConfig({
     PKG_VERSION: JSON.stringify(version),
   },
   outExtension() { return { js: '.mjs' }; },
+  external: ['winston-transport'],
 });

@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import { createLogger } from './logger.mjs';
 import { onShutdown } from './signals.mjs';
+import type { BufferedLogEntry } from './log-buffer.mjs';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -47,6 +48,16 @@ export interface HealthStatus {
   };
   http?: {
     enabled: boolean;
+  };
+  netconsole?: {
+    enabled: boolean;
+    port: number;
+    messageCount: number;
+  };
+  log?: {
+    entries: BufferedLogEntry[];
+    bufferSize: number;
+    level: string;
   };
 }
 

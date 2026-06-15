@@ -49,6 +49,12 @@
  * logging:
  *   level: info
  *   file: /var/log/tsbootkit.log
+ *   buffer: 500
+ *
+ * netconsole:
+ *   port: 6666
+ *   address: 192.168.1.1
+ *   level: info
  * ```
  */
 
@@ -60,6 +66,7 @@ import { parse as parseYaml } from 'yaml';
 import { IPv4, MAC } from './shared/types.mjs';
 import { isValidIPv4, isValidMAC } from './shared/network.mjs';
 import { PXEMode } from './pxe/types.mjs';
+import type { NetconsoleConfig } from './netconsole/types.mjs';
 
 // ─── Reservation ───────────────────────────────────────────────────
 
@@ -123,7 +130,13 @@ export interface HTTPConfig {
 export interface LoggingConfig {
   level?: string;
   file?: string;
+  /** Max log entries in the in-memory ring buffer for the dashboard (0 = disabled, default 500). */
+  buffer?: number;
 }
+
+// ─── Netconsole config section ─────────────────────────────────────
+
+export { NetconsoleConfig } from './netconsole/types.mjs';
 
 // ─── Full config ───────────────────────────────────────────────────
 
@@ -166,6 +179,8 @@ export interface TSBootKitConfig {
   wait?: boolean;
   /** Maximum seconds to wait for the interface (0 = wait forever, default 0). */
   waitTimeout?: number;
+  /** Netconsole listener configuration (undefined = disabled). */
+  netconsole?: NetconsoleConfig;
   /** Directory that the config file was loaded from (for resolving relative paths). Set by loadConfig(). */
   configDir?: string;
 }
@@ -196,6 +211,7 @@ interface RawConfig {
   followSymlinks?: boolean;
   wait?: boolean;
   waitTimeout?: number;
+  netconsole?: NetconsoleConfig;
   reservations?: Array<{
     mac?: string;
     ip?: string;
@@ -358,6 +374,24 @@ export function validateConfig(raw: RawConfig, configDir?: string): TSBootKitCon
     errors.push('tftp.maxTransfers must be between 1 and 1024');
   }
 
+  // Validate netconsole section
+  if (raw.netconsole) {
+    if (raw.netconsole.port !== undefined && raw.netconsole.port !== 0 && (raw.netconsole.port < 1 || raw.netconsole.port > 65535)) {
+      errors.push('netconsole.port must be between 1 and 65535 (or 0 to disable)');
+    }
+    if (raw.netconsole.address && !isValidIPv4(raw.netconsole.address)) {
+      errors.push(`Invalid netconsole.address: "${raw.netconsole.address}"`);
+    }
+    if (raw.netconsole.level && !['error', 'warn', 'info', 'debug', 'trace'].includes(raw.netconsole.level)) {
+      errors.push(`Invalid netconsole.level: "${raw.netconsole.level}" (must be error|warn|info|debug|trace)`);
+    }
+  }
+
+  // Validate logging.buffer
+  if (raw.logging?.buffer !== undefined && raw.logging.buffer !== 0 && (raw.logging.buffer < 1 || raw.logging.buffer > 10000)) {
+    errors.push('logging.buffer must be between 1 and 10000 (or 0 to disable)');
+  }
+
   if (errors.length > 0) {
     throw new ConfigError(`Config validation errors:\n  ${errors.join('\n  ')}`);
   }
@@ -409,6 +443,7 @@ export function validateConfig(raw: RawConfig, configDir?: string): TSBootKitCon
     followSymlinks: raw.followSymlinks,
     wait: raw.wait,
     waitTimeout: raw.waitTimeout,
+    netconsole: raw.netconsole,
     configDir,
     reservations,
   };

@@ -12,7 +12,7 @@
 
 import { EventEmitter } from 'node:events';
 
-import { createLogger } from '../shared/logger.mjs';
+import { createLogger, setLogBuffer, createLogBuffer, getLogBuffer, setBufferLogLevel, TSBOOTKIT_LEVEL_NAMES, type TsbootkitLevel } from '../shared/logger.mjs';
 import { onShutdown } from '../shared/signals.mjs';
 import { IPv4, MAC, type InterfaceConfig, type InterfaceStatus } from '../shared/types.mjs';
 import { getInterfaceConfig, getInterfaceStatus, waitForInterface } from '../shared/network.mjs';
@@ -24,6 +24,7 @@ import { registerDashboardRoutes, type DashboardStatus, type DashboardReservatio
 import { TFTPServer } from '../tftp/server.mjs';
 import { DHCPServer } from '../dhcp/server.mjs';
 import { BOOTPServer } from '../bootp/server.mjs';
+import { NetconsoleServer } from '../netconsole/server.mjs';
 
 import {
   PXEServerConfig,
@@ -67,6 +68,8 @@ export class PXEServer extends EventEmitter {
   private ipServer: DHCPServer | BOOTPServer | null = null;
   private healthServer: HealthCheckServer | null = null;
   private httpServer: HTTPServer | null = null;
+  private netconsoleServer: NetconsoleServer | null = null;
+  private logBuffer: import('../shared/log-buffer.mjs').LogBufferTransport | null = null;
   private mdns: mDNSAdvertiser | null = null;
   private interfaceMonitor: ReturnType<typeof setInterval> | null = null;
   private interfaceState: InterfaceStatus | 'ip-changed' = 'up';
@@ -100,12 +103,27 @@ export class PXEServer extends EventEmitter {
     // Bring up the dashboard before interface resolution so operators
     // can monitor progress while waiting for a missing interface.
     if ((this.rawConfig.healthPort ?? 9470) > 0) {
+      // Create the shared log buffer so all loggers capture to it
+      const bufferSize = this.rawConfig.logging?.buffer ?? 500;
+      if (bufferSize > 0) {
+        this.logBuffer = createLogBuffer(bufferSize);
+        setLogBuffer(this.logBuffer);
+      }
+
       this.healthServer = new HealthCheckServer({
         port: this.rawConfig.healthPort ?? 9470,
         getStatus: () => this.getHealthStatus(),
       });
 
-      registerDashboardRoutes(this.healthServer, () => this.getDashboardStatus());
+      registerDashboardRoutes(
+        this.healthServer,
+        () => this.getDashboardStatus(),
+        (level: string) => {
+          if (TSBOOTKIT_LEVEL_NAMES.includes(level as TsbootkitLevel)) {
+            setBufferLogLevel(level as TsbootkitLevel);
+          }
+        },
+      );
 
       await this.healthServer.start();
     }
@@ -309,6 +327,22 @@ export class PXEServer extends EventEmitter {
       await this.httpServer.start();
     }
 
+    // Start netconsole listener (if enabled)
+    if (this.rawConfig.netconsole && (this.rawConfig.netconsole.port ?? 6666) > 0) {
+      this.netconsoleServer = new NetconsoleServer({
+        port: this.rawConfig.netconsole.port,
+        address: this.rawConfig.netconsole.address ?? this.config.serverIP as string,
+        level: this.rawConfig.netconsole.level,
+        hooks: this.config.hooks,
+      });
+
+      this.netconsoleServer.on('message', (msg: import('../netconsole/server.mjs').NetconsoleMessage) => {
+        this.emit('netconsole-message', msg);
+      });
+
+      await this.netconsoleServer.start();
+    }
+
     // Start mDNS advertisement
     if (this.config.mdnsAddress) {
       const mdnsConfig: import('../shared/mdns.mjs').mDNSConfig = {
@@ -349,6 +383,11 @@ export class PXEServer extends EventEmitter {
     if (this.mdns) {
       this.mdns.stop();
       this.mdns = null;
+    }
+
+    if (this.netconsoleServer) {
+      await this.netconsoleServer.stop();
+      this.netconsoleServer = null;
     }
 
     if (this.httpServer) {
@@ -495,6 +534,23 @@ export class PXEServer extends EventEmitter {
       status.http = { enabled: true };
     }
 
+    if (this.netconsoleServer) {
+      status.netconsole = {
+        enabled: true,
+        port: this.netconsoleServer.listeningPort,
+        messageCount: this.netconsoleServer.messageCount,
+      };
+    }
+
+    const healthBuf = getLogBuffer();
+    if (healthBuf) {
+      status.log = {
+        entries: healthBuf.getEntries(),
+        bufferSize: healthBuf.size,
+        level: this.log.transports[0]?.level ?? 'info',
+      };
+    }
+
     return status;
   }
 
@@ -517,6 +573,8 @@ export class PXEServer extends EventEmitter {
         bootp: null,
         http: null,
         mdns: null,
+        netconsole: null,
+        log: null,
       };
     }
 
@@ -533,6 +591,8 @@ export class PXEServer extends EventEmitter {
       bootp: null,
       http: null,
       mdns: null,
+      netconsole: null,
+      log: null,
     };
 
     if (this.tftpServer) {
@@ -571,6 +631,23 @@ export class PXEServer extends EventEmitter {
 
     if (this.mdns) {
       status.mdns = { enabled: true };
+    }
+
+    if (this.netconsoleServer) {
+      status.netconsole = {
+        enabled: true,
+        port: this.netconsoleServer.listeningPort,
+        messageCount: this.netconsoleServer.messageCount,
+      };
+    }
+
+    const dashBuf = getLogBuffer();
+    if (dashBuf) {
+      status.log = {
+        entries: dashBuf.getEntries(),
+        bufferSize: dashBuf.size,
+        level: this.log.transports[0]?.level ?? 'info',
+      };
     }
 
     return status;

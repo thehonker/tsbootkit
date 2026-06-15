@@ -10,6 +10,7 @@ export default defineConfig({
     'src/cli/dhcpd.mts',
     'src/cli/bootpd.mts',
     'src/cli/pxed.mts',
+    'src/cli/netconsoled.mts',
   ],
   format: ['esm'],
   outDir: 'dist',

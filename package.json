@@ -1,6 +1,6 @@
 {
   "name": "tsbootkit",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "description": "TypeScript PXE/TFTP toolkit — TFTP, DHCP, BOOTP, and PXE servers",
   "type": "module",
   "license": "GPL-3.0",
@@ -26,7 +26,8 @@
     "tsbootkit-tftpd": "dist/cli/tftpd.mjs",
     "tsbootkit-dhcpd": "dist/cli/dhcpd.mjs",
     "tsbootkit-bootpd": "dist/cli/bootpd.mjs",
-    "tsbootkit-pxed": "dist/cli/pxed.mjs"
+    "tsbootkit-pxed": "dist/cli/pxed.mjs",
+    "tsbootkit-netconsoled": "dist/cli/netconsoled.mjs"
   },
   "scripts": {
     "build": "tsup && npm run sbom",

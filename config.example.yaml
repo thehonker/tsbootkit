@@ -78,6 +78,7 @@ tftpRoot: /tftpboot
 # logging:
 #   level: info           # error | warn | info | debug | trace
 #   file: /var/log/tsbootkit.log
+#   buffer: 500           # max log entries in dashboard ring buffer (0 = disabled, default 500)
 
 # ── Lifecycle hooks ─────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ tftpRoot: /tftpboot
 # TFTP events:  pre | post | on-error
 # DHCP events:  discover | offer | request | ack | nak
 # BOOTP events: request | reply
+# Netconsole events: message
 #
 # TFTP arguments:  <event> <direction> <client-ip> <client-port> <filename> [extra...]
 #   extra (post):      <bytes-sent> <bytes-received>
@@ -102,6 +104,9 @@ tftpRoot: /tftpboot
 #
 # BOOTP arguments: <event> <client-mac> [extra...]
 #   extra (reply):     <assigned-ip>
+#
+# Netconsole arguments: <event> <source> <message>
+#   source is "IP:port" of the sending kernel
 #
 # hooks:
 #   - exec: /usr/local/bin/notify-boot.sh
@@ -162,3 +167,18 @@ tftpRoot: /tftpboot
 # Defaults to serverIP. Set to "" to disable.
 # Important for Docker: container IP ≠ host IP
 # mdnsAddress: 192.168.1.1
+
+# ── Netconsole ──────────────────────────────────────────────────────
+
+# Listen for kernel netconsole UDP messages from booting machines.
+# Disabled by default (port 0). Set port to enable.
+#
+# On the kernel side, configure netconsole to target this host:
+#   modprobe netconsole netconsole=6666@/eth0,6666@192.168.1.1/
+# Or on the kernel cmdline:
+#   netconsole=6666@/eth0,6666@192.168.1.1/
+#
+# netconsole:
+#   port: 6666              # UDP port (default 6666, 0 = disabled)
+#   # address: 192.168.1.1  # defaults to serverIP
+#   # level: info           # log level for received messages

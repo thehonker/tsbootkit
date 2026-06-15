@@ -7,6 +7,7 @@
 
 import { IPv4, MAC } from '../shared/types.mjs';
 import type { Reservation } from '../config.mjs';
+import type { NetconsoleConfig } from '../netconsole/types.mjs';
 
 // ─── PXE server mode ───────────────────────────────────────────────
 
@@ -70,6 +71,10 @@ export interface PXEServerConfig {
   wait?: boolean;
   /** Maximum seconds to wait for the interface (0 = wait forever, default 0). Only meaningful when wait is true. */
   waitTimeout?: number;
+  /** Netconsole listener configuration (undefined = disabled). */
+  netconsole?: NetconsoleConfig;
+  /** Logging configuration. */
+  logging?: import('../config.mjs').LoggingConfig;
 }
 
 // ─── PXE server events (reserved for future use) ────────────────────

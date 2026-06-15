@@ -8,12 +8,15 @@
 
 export { IPv4, MAC, InterfaceConfig, NetworkCIDR, Peer } from './shared/types.mjs';
 export { getInterfaceConfig, isValidIPv4, isValidMAC, computeCIDR, generateRandomIP } from './shared/network.mjs';
-export { createLogger, verboseCountToLevel } from './shared/logger.mjs';
+export { createLogger, verboseCountToLevel, setLogBuffer, getLogBuffer, createLogBuffer, setBufferLogLevel, setAllLogLevels } from './shared/logger.mjs';
 export type { TsbootkitLevel } from './shared/logger.mjs';
+
+export { LogBufferTransport } from './shared/log-buffer.mjs';
+export type { BufferedLogEntry } from './shared/log-buffer.mjs';
 export { onShutdown } from './shared/signals.mjs';
 
 export { runHook, runHooks, buildHookArgs } from './shared/hooks.mjs';
-export type { HookEvent, TFTPHookEvent, DHCPHookEvent, BOOTPHookEvent, HookConfig, HookContext, TFTPHookContext, DHCPHookContext, BOOTPHookContext } from './shared/hooks.mjs';
+export type { HookEvent, TFTPHookEvent, DHCPHookEvent, BOOTPHookEvent, NetconsoleHookEvent, HookConfig, HookContext, TFTPHookContext, DHCPHookContext, BOOTPHookContext, NetconsoleHookContext } from './shared/hooks.mjs';
 
 // ─── TFTP ──────────────────────────────────────────────────────────
 
@@ -34,6 +37,11 @@ export { DHCPServer } from './dhcp/server.mjs';
 export { BOOTPOp, BOOTPServerConfig, BOOTP_SERVER_PORT, BOOTP_CLIENT_PORT } from './bootp/types.mjs';
 export { encodeBOOTPReply } from './bootp/protocol.mjs';
 export { BOOTPServer } from './bootp/server.mjs';
+
+// ─── Netconsole ────────────────────────────────────────────────────
+
+export { NetconsoleServer } from './netconsole/server.mjs';
+export type { NetconsoleConfig } from './netconsole/types.mjs';
 
 // ─── PXE ───────────────────────────────────────────────────────────
 

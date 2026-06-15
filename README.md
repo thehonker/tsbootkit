@@ -15,7 +15,8 @@ Inspired by [pTFTPd](https://github.com/mpetazzoni/ptftpd).
 - **HTTP fallback** — UEFI firmware that prefers HTTP over TFTP just works, range request support (RFC7233)
 - **mDNS advertisement** — `_tftp._udp` and `_http._tcp` via DNS-SD, customizable address for Docker
 - **Architecture-aware boot files** — BIOS machines get `pxelinux.0`, UEFI x86 gets `bootx64.efi`, ARM gets `grubaa64.efi` — all from one config
-- **Lifecycle hooks** — Execute any script on TFTP transfer events, DHCP protocol events, or BOOTP events
+- **Lifecycle hooks** — Execute any script on TFTP transfer events, DHCP protocol events, BOOTP events, or netconsole messages
+- **Netconsole listener** — Receive kernel log messages over UDP, integrated with logging and hooks
 - **Web dashboard** — Live status at `/ui/`, transfers with progress, DHCP leases, reservations
 - **SBOM** — CycloneDX in the npm package, Docker manifest, and GitHub release
 
@@ -118,6 +119,7 @@ tftpRoot: /tftpboot            # TFTP server root directory
 # logging:
 #   level: info                 # error | warn | info | debug | trace
 #   file: /var/log/tsbootkit.log
+#   buffer: 500                  # max log entries in dashboard ring buffer (0 = disabled, default 500)
 
 # ── Health check & HTTP ─────────────────────────────────────────
 
@@ -160,6 +162,90 @@ reservations:
 
 **Resolution priority:** reservation `bootFile` → reservation `bootFiles` → global `bootFiles` → global `bootFile`.
 
+## Netconsole
+
+tsbootkit can listen for [kernel netconsole](https://docs.kernel.org/networking/netconsole.html) messages over UDP. This is useful for capturing kernel log output from machines that are PXE booting — before they have disk or serial console access.
+
+### Configuration
+
+```yaml
+netconsole:
+  port: 6666              # UDP port (default 6666, 0 = disabled)
+  address: 192.168.1.1   # defaults to serverIP
+  level: info             # log level for received messages
+```
+
+Or via CLI:
+
+```bash
+npx tsbootkit-pxed --config tsbootkit.yaml --netconsole-port 6666
+```
+
+### Kernel-side Setup
+
+Configure the booting kernel to send netconsole messages to tsbootkit:
+
+**Module parameter (runtime):**
+```bash
+modprobe netconsole netconsole=6666@/eth0,6666@192.168.1.1/
+```
+
+**Kernel cmdline (boot-time):**
+```
+netconsole=6666@/eth0,6666@192.168.1.1/
+```
+
+The format is `<src-port>@/<src-iface>,<dst-port>@<dst-ip>/`.
+
+Messages are logged at the configured level (`info` by default) with the sender's IP:
+
+```
+10:30:15 netconsole info: <192.168.1.50> Kernel panic - not syncing: VFS
+```
+
+### Netconsole Hooks
+
+Hook into netconsole messages to trigger alerts on kernel panics or other events:
+
+```yaml
+hooks:
+  - exec: /usr/local/bin/alert-kernel-panic.sh
+    events: [message]             # netconsole message event
+```
+
+Netconsole hook arguments: `<event> <source> <message>`
+
+**Example:**
+```
+message 192.168.1.50:6666 Kernel panic - not syncing: VFS
+```
+
+## Log Stream
+
+The dashboard includes a live log stream that shows recent messages from **all** tsbootkit components — TFTP transfers, DHCP handshakes, BOOTP replies, netconsole messages, errors, and lifecycle events. No need to SSH into the server to check logs.
+
+### Buffer Configuration
+
+```yaml
+logging:
+  buffer: 500    # max entries in the ring buffer (0 = disabled, default 500)
+```
+
+The buffer is an in-memory ring buffer — oldest entries are discarded when the limit is reached. Default 500 entries (~100KB memory).
+
+### Runtime Level Selection
+
+The dashboard has a **level dropdown** that changes the log level at runtime without restarting the daemon:
+
+```bash
+# Or via the API directly
+curl -X PUT http://localhost:9470/api/log/level \
+  -H 'Content-Type: application/json' \
+  -d '{"level": "debug"}'
+```
+
+Valid levels: `error`, `warn`, `info`, `debug`, `trace`. The change affects all loggers immediately.
+
 ## Static Reservations
 
 Map known MAC addresses to fixed IPs. Reserved clients always get the same address — no lease database needed.
@@ -199,6 +285,8 @@ hooks:
     events: [ack]                     # only on DHCP ACK
   - exec: /usr/local/bin/asset-track.sh
     events: [reply]                   # BOOTP reply
+  - exec: /usr/local/bin/alert-panic.sh
+    events: [message]                  # netconsole message
   - exec: /usr/local/bin/log-all.sh  # no events filter = all events
 ```
 
@@ -263,7 +351,7 @@ A single hook can match events from multiple protocols:
 ```yaml
 hooks:
   - exec: /usr/local/bin/log-everything.sh
-    events: [post, ack, reply]       # TFTP post + DHCP ack + BOOTP reply
+    events: [post, ack, reply, message]  # TFTP + DHCP + BOOTP + netconsole
 ```
 
 ## CLI Reference
@@ -290,6 +378,7 @@ npx tsbootkit-pxed <interface> <bootfile> <tftproot> [options]
 | `--health-port <port>` | `9470` | Health check + dashboard port (0 = disabled) |
 | `--http-port <port>` | `0` | HTTP fallback port (0 = disabled) |
 | `--mdns-address <ip>` | server IP | mDNS address to advertise (empty = disabled) |
+| `--netconsole-port <port>` | `0` | UDP port for netconsole listener (0 = disabled) |
 | `--pid-file <path>` | — | Write PID to file (stale PID auto-cleaned) |
 | `-v, --verbose` | — | Increase verbosity (`-v` debug, `-vv` trace) |
 | `--wait` | `false` | Wait for the interface to come up before starting |
@@ -347,6 +436,22 @@ npx tsbootkit-bootpd <interface> <bootfile> [options]
 | `--wait` | `false` | Wait for the interface to come up before starting |
 | `--wait-timeout <sec>` | `0` | Max seconds to wait for interface (0 = forever, requires `--wait`) |
 
+### `tsbootkit-netconsoled` — Netconsole Listener
+
+```bash
+npx tsbootkit-netconsoled --port 6666 --address 0.0.0.0
+npx tsbootkit-netconsoled --config tsbootkit.yaml
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config <path>` | — | Path to YAML config file |
+| `--port <port>` | `6666` | UDP port to listen on (0 = disabled) |
+| `--address <ip>` | `0.0.0.0` | Address to bind |
+| `--level <level>` | `info` | Log level for received messages |
+| `--pid-file <path>` | — | Write PID to file (stale PID auto-cleaned) |
+| `-v, --verbose` | — | Increase verbosity |
+
 ### Config vs. CLI Flags
 
 When both `--config` and CLI flags are provided:
@@ -373,10 +478,12 @@ Everything works as a library:
 ```typescript
 import {
   PXEServer, TFTPServer, DHCPServer, BOOTPServer,
+  NetconsoleServer,
   TFTPClient,
-  createLogger,
+  createLogger, createLogBuffer, setLogBuffer,
   type HookConfig,
   type TsbootkitLevel,
+  type BufferedLogEntry,
 } from 'tsbootkit';
 
 // ── Full PXE daemon ──────────────────────────────────────────
@@ -440,6 +547,30 @@ const bootp = new BOOTPServer({
 bootp.addReservation('11:22:33:44:55:66', '192.168.1.51');
 await bootp.start();
 
+// ── Netconsole listener ──────────────────────────────────────
+
+const netconsole = new NetconsoleServer({
+  port: 6666,
+  address: '192.168.1.1',
+  level: 'info',
+  hooks: [
+    { exec: '/usr/local/bin/on-panic.sh', events: ['message'] },
+  ],
+});
+netconsole.on('message', (msg) => {
+  console.log(`[${msg.source}] ${msg.text}`);
+});
+await netconsole.start();
+
+// ── Log buffer for dashboard/API ────────────────────────────
+
+const buffer = createLogBuffer(500);
+setLogBuffer(buffer);  // all future createLogger() calls attach it
+
+// Read the buffer at any time
+const entries: BufferedLogEntry[] = buffer.getEntries();
+console.log(`Buffer has ${buffer.size}/${buffer.capacity} entries`);
+
 // ── TFTP client ──────────────────────────────────────────────
 
 const client = new TFTPClient({ host: '192.168.1.1', port: 69 });
@@ -476,7 +607,8 @@ Hit `http://your-pxe-server:9470/ui/` for a live status page:
 - Active TFTP transfers with progress bars
 - DHCP leases with expiry countdowns
 - Configured reservations
-- Service indicators (TFTP, DHCP, HTTP, mDNS)
+- Service indicators (TFTP, DHCP, HTTP, mDNS, netconsole)
+- **Log stream** — live scrolling log output from all components with a runtime level selector
 
 The dashboard runs on the health check server — no extra port needed.
 
@@ -485,7 +617,8 @@ The dashboard runs on the health check server — no extra port needed.
 | Endpoint | Description |
 | --- | --- |
 | `GET /health` | Health check (JSON, for Docker/init) |
-| `GET /api/status` | Full status with transfers, leases, reservations |
+| `GET /api/status` | Full status with transfers, leases, reservations, log entries |
+| `PUT /api/log/level` | Change log level at runtime (`{ "level": "debug" }`) |
 | `GET /ui/` | Dashboard HTML |
 
 ## Health Check
@@ -539,6 +672,7 @@ mdnsAddress: 192.168.1.1   # your host IP
 | 67 | UDP | DHCP server |
 | 69 | UDP | TFTP server |
 | 9470 | TCP | Health check + dashboard |
+| 6666 | UDP | Netconsole listener (when enabled) |
 
 Note: DHCP (port 67) requires `--net=host` or `NET_ADMIN` capability.
 
@@ -573,10 +707,9 @@ npm run lint         # lint
 ## TODO
 
 - [ ] Multicast TFTP (RFC 2090) — one-to-many firmware pushes
-- [ ] DHCPv6 / PXE over IPv6 — ground-up new protocol (~2-3 weeks)
+- [ ] DHCPv6 / PXE over IPv6 — ground-up new protocol
 - [ ] Syslinux/iPXE config parser — walk `pxelinux.cfg/` for auto-discovered boot menus
 - [ ] Plugin system — loadable modules for custom request handling
-- [ ] Helm chart for K8s deployment
 - [ ] Track total bytes transferred across all TFTP sessions
 
 ## License

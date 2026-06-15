@@ -15,6 +15,7 @@
  *   TFTP:  pre | post | on-error
  *   DHCP:  discover | offer | request | ack | nak
  *   BOOTP: request | reply
+ *   Netconsole: message
  *
  * Arguments passed to the executable vary by protocol:
  *
@@ -31,6 +32,8 @@
  *
  *   BOOTP: <event> <client-mac> [extra...]
  *     extra (reply):     <assigned-ip>
+ *
+ *   Netconsole: <event> <source> <message>
  */
 
 import { execFile } from 'node:child_process';
@@ -47,8 +50,11 @@ export type DHCPHookEvent = 'discover' | 'offer' | 'request' | 'ack' | 'nak';
 /** BOOTP protocol events. */
 export type BOOTPHookEvent = 'request' | 'reply';
 
+/** Netconsole events. */
+export type NetconsoleHookEvent = 'message';
+
 /** All possible hook events across all protocols. */
-export type HookEvent = TFTPHookEvent | DHCPHookEvent | BOOTPHookEvent;
+export type HookEvent = TFTPHookEvent | DHCPHookEvent | BOOTPHookEvent | NetconsoleHookEvent;
 
 // ─── Hook config ───────────────────────────────────────────────────
 
@@ -114,8 +120,18 @@ export interface BOOTPHookContext {
   assignedIP?: string;
 }
 
+/** Context for a netconsole hook invocation. */
+export interface NetconsoleHookContext {
+  protocol: 'netconsole';
+  event: NetconsoleHookEvent;
+  /** Source address ("IP:port"). */
+  source: string;
+  /** Log line text. */
+  message: string;
+}
+
 /** Union of all hook contexts. */
-export type HookContext = TFTPHookContext | DHCPHookContext | BOOTPHookContext;
+export type HookContext = TFTPHookContext | DHCPHookContext | BOOTPHookContext | NetconsoleHookContext;
 
 // ─── Arg builders ──────────────────────────────────────────────────
 
@@ -193,6 +209,17 @@ function buildBOOTPHookArgs(ctx: BOOTPHookContext): string[] {
 }
 
 /**
+ * Build the argument list for a netconsole hook invocation.
+ */
+function buildNetconsoleHookArgs(ctx: NetconsoleHookContext): string[] {
+  return [
+    ctx.event,
+    ctx.source,
+    ctx.message,
+  ];
+}
+
+/**
  * Build the argument list for any hook invocation.
  */
 export function buildHookArgs(ctx: HookContext): string[] {
@@ -200,6 +227,7 @@ export function buildHookArgs(ctx: HookContext): string[] {
     case 'tftp': return buildTFTPHookArgs(ctx);
     case 'dhcp': return buildDHCPHookArgs(ctx);
     case 'bootp': return buildBOOTPHookArgs(ctx);
+    case 'netconsole': return buildNetconsoleHookArgs(ctx);
   }
 }
 

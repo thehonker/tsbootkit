@@ -34,7 +34,7 @@ ENV TSBOOTKIT_CONFIG=/etc/tsbootkit.yaml
 VOLUME /tftpboot
 
 # DHCP server port (needs NET_ADMIN capability or --net=host)
-EXPOSE 67/udp 69/udp 9470/tcp
+EXPOSE 67/udp 69/udp 9470/tcp 6666/udp
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

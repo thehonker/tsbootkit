@@ -118,6 +118,11 @@ async function main(): Promise<void> {
       default: 0,
       description: 'Max seconds to wait for the interface (0 = forever, requires --wait)',
     })
+    .option('netconsole-port', {
+      type: 'number',
+      default: 0,
+      description: 'UDP port for netconsole listener (0 to disable, default 0)',
+    })
     .version()
     .help()
     .argv;
@@ -175,6 +180,8 @@ async function main(): Promise<void> {
       followSymlinks: config.followSymlinks,
       wait: config.wait ?? argv.wait as boolean | undefined,
       waitTimeout: config.waitTimeout ?? argv.waitTimeout as number | undefined,
+      netconsole: config.netconsole ?? (argv.netconsolePort > 0 ? { port: argv.netconsolePort as number } : undefined),
+      logging: config.logging,
     });
 
     server.on('ready', () => {
@@ -222,6 +229,7 @@ async function main(): Promise<void> {
       mdnsAddress: argv.mdnsAddress as string | undefined,
       wait: argv.wait as boolean | undefined,
       waitTimeout: argv.waitTimeout as number | undefined,
+      netconsole: argv.netconsolePort > 0 ? { port: argv.netconsolePort as number } : undefined,
     });
 
     server.on('ready', () => {

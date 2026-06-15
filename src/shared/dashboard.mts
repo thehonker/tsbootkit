@@ -7,6 +7,7 @@
  */
 
 import type { HealthCheckServer } from './health.mjs';
+import type { BufferedLogEntry } from './log-buffer.mjs';
 
 // ─── API data types ────────────────────────────────────────────────
 
@@ -76,8 +77,17 @@ export interface DashboardStatus {
   mdns: {
     enabled: boolean;
   } | null;
+  netconsole: {
+    enabled: boolean;
+    port: number;
+    messageCount: number;
+  } | null;
+  log: {
+    entries: BufferedLogEntry[];
+    bufferSize: number;
+    level: string;
+  } | null;
 }
-
 // ─── Dashboard data provider ───────────────────────────────────────
 
 /**
@@ -92,13 +102,15 @@ export type DashboardDataProvider = () => DashboardStatus;
  * Register dashboard routes on the health check server's HTTP instance.
  *
  * Routes:
- *   GET /api/status   — JSON status with transfers, leases, reservations
- *   GET /ui/          — Single-page dashboard HTML
- *   GET /ui           — Redirect to /ui/
+ *   GET /api/status    — JSON status with transfers, leases, reservations, log
+ *   PUT /api/log/level — Change log level at runtime
+ *   GET /ui/           — Single-page dashboard HTML
+ *   GET /ui            — Redirect to /ui/
  */
 export function registerDashboardRoutes(
   server: HealthCheckServer,
   provider: DashboardDataProvider,
+  onLogLevelChange?: (level: string) => void,
 ): void {
   server.addRoute('GET', '/api/status', async (_req, res) => {
     try {
@@ -108,6 +120,37 @@ export function registerDashboardRoutes(
         'Cache-Control': 'no-cache',
       });
       res.end(JSON.stringify(status));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: (err as Error).message }));
+    }
+  });
+
+  server.addRoute('PUT', '/api/log/level', async (req, res) => {
+    try {
+      const body = await new Promise<string>((resolve, reject) => {
+        let data = '';
+        req.on('data', (chunk: string) => { data += chunk; });
+        req.on('end', () => resolve(data));
+        req.on('error', reject);
+      });
+
+      const parsed = JSON.parse(body);
+      const level = parsed.level;
+      const validLevels = ['error', 'warn', 'info', 'debug', 'trace'];
+
+      if (!level || !validLevels.includes(level)) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: `Invalid level. Must be one of: ${validLevels.join(', ')}` }));
+        return;
+      }
+
+      if (onLogLevelChange) {
+        onLogLevelChange(level);
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ level }));
     } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: (err as Error).message }));
@@ -163,6 +206,18 @@ td{padding:8px 4px;border-bottom:1px solid #21262d}
 .progress-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,#1f6feb,#58a6ff);transition:width .3s}
 .empty{color:#484f58;font-style:italic;padding:12px 0}
 .refresh{color:#484f58;font-size:11px}
+.log-controls{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+.log-controls label{color:#8b949e;font-size:13px}
+.log-controls select{background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:4px 8px;font-size:13px}
+.log-panel{background:#010409;border:1px solid #30363d;border-radius:8px;padding:12px;max-height:350px;overflow-y:auto;font-family:'SF Mono',Monaco,'Courier New',monospace;font-size:12px;line-height:1.6}
+.log-line{white-space:pre-wrap;word-break:break-all}
+.log-ts{color:#484f58}
+.log-error{color:#f85149}
+.log-warn{color:#d29922}
+.log-info{color:#58a6ff}
+.log-debug{color:#8b949e}
+.log-trace{color:#484f58}
+.log-label{color:#7ee787}
 </style>
 </head>
 <body>
@@ -177,6 +232,20 @@ td{padding:8px 4px;border-bottom:1px solid #21262d}
 <div id="http-transfers"></div>
 <h2 style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Reservations</h2>
 <div id="reservations"></div>
+<div id="netconsole-section"></div>
+<h2 style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Log Stream</h2>
+<div class="log-controls">
+  <label>Level:</label>
+  <select id="log-level">
+    <option value="error">error</option>
+    <option value="warn">warn</option>
+    <option value="info" selected>info</option>
+    <option value="debug">debug</option>
+    <option value="trace">trace</option>
+  </select>
+  <span id="log-count" style="color:#484f58;font-size:12px"></span>
+</div>
+<div class="log-panel" id="log-panel"><div class="empty">No log entries yet</div></div>
 <div class="refresh" id="refresh"></div>
 <script>
 function fmt(b){if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'}
@@ -200,6 +269,7 @@ function refresh(){
     if(data.bootp)stats+='<div class="stat"><span class="label">BOOTP</span><span class="value">'+data.bootp.allocated+' allocated</span></div>';
     if(data.http)stats+='<div class="stat"><span class="label">HTTP</span><span class="value">'+(data.http.activeTransfers?data.http.activeTransfers+' transfers':badge('enabled','ok'))+'</span></div>';
     if(data.mdns)stats+='<div class="stat"><span class="label">mDNS</span><span class="value">'+badge('enabled','ok')+'</span></div>';
+    if(data.netconsole)stats+='<div class="stat"><span class="label">Netconsole</span><span class="value">'+badge('enabled','ok')+' port '+data.netconsole.port+'</span></div>';
     stats+='</div>';
     document.getElementById('stats').innerHTML=stats;
     if(data.tftp&&data.tftp.transfers.length>0){
@@ -242,11 +312,46 @@ function refresh(){
     }else{
       document.getElementById('reservations').innerHTML='<div class="empty">No reservations</div>';
     }
+    if(data.netconsole&&data.netconsole.enabled){
+      document.getElementById('netconsole-section').innerHTML='<h2 style="font-size:14px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:24px 0 12px">Netconsole</h2><div class="card"><div class="stat"><span class="label">Port</span><span class="value">'+data.netconsole.port+'</span></div><div class="stat"><span class="label">Messages</span><span class="value">'+data.netconsole.messageCount+'</span></div></div>';
+    }else{
+      document.getElementById('netconsole-section').innerHTML='';
+    }
+    // Log stream
+    if(data.log){
+      const sel=document.getElementById('log-level');
+      if(sel&&data.log.level&&sel.value!==data.log.level){sel.value=data.log.level;}
+      const panel=document.getElementById('log-panel');
+      const countEl=document.getElementById('log-count');
+      if(countEl)countEl.textContent=data.log.bufferSize+' entries';
+      if(panel){
+        const wasAtBottom=panel.scrollHeight-panel.clientHeight-panel.scrollTop<30;
+        if(data.log.entries.length>0){
+          let html='';
+          data.log.entries.forEach(e=>{
+            html+='<div class="log-line"><span class="log-ts">'+esc(e.timestamp)+'</span> <span class="log-'+esc(e.level)+'">'+esc(e.level.toUpperCase().padEnd(5))+'</span> <span class="log-label">'+esc(e.label)+'</span> '+esc(e.message)+'</div>';
+          });
+          panel.innerHTML=html;
+        }else{
+          panel.innerHTML='<div class="empty">No log entries yet</div>';
+        }
+        if(wasAtBottom){panel.scrollTop=panel.scrollHeight;}
+      }
+    }
     document.getElementById('refresh').textContent='Updated '+new Date().toLocaleTimeString();
   }).catch(err=>{
     document.getElementById('refresh').textContent='Error: '+err.message;
   });
 }
+// Log level selector
+(function(){
+  const sel=document.getElementById('log-level');
+  if(sel){
+    sel.addEventListener('change',function(){
+      fetch('/api/log/level',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({level:sel.value})}).catch(()=>{});
+    });
+  }
+})();
 refresh();setInterval(refresh,5000);
 </script>
 </body>

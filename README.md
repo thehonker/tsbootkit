@@ -4,6 +4,49 @@
 
 A TypeScript PXE/TFTP toolkit — TFTP, DHCP, BOOTP, and PXE servers for network booting.
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+  - [PXE Daemon (recommended)](#pxe-daemon-recommended)
+  - [Individual Servers](#individual-servers)
+  - [Docker](#docker)
+- [Configuration](#configuration)
+- [Architecture-Aware Boot Files](#architecture-aware-boot-files)
+- [Netconsole](#netconsole)
+  - [Configuration](#configuration-1)
+  - [Kernel-side Setup](#kernel-side-setup)
+  - [Netconsole Hooks](#netconsole-hooks)
+- [Log Stream](#log-stream)
+  - [Buffer Configuration](#buffer-configuration)
+  - [Runtime Level Selection](#runtime-level-selection)
+- [Static Reservations](#static-reservations)
+- [Lifecycle Hooks](#lifecycle-hooks)
+  - [TFTP Hook Arguments](#tftp-hook-arguments)
+  - [DHCP Hook Arguments](#dhcp-hook-arguments)
+  - [BOOTP Hook Arguments](#bootp-hook-arguments)
+  - [Cross-Protocol Hooks](#cross-protocol-hooks)
+- [CLI Reference](#cli-reference)
+  - [`tsbootkit-pxed`](#tsbootkit-pxed--combined-pxe-daemon)
+  - [`tsbootkit-dhcpd`](#tsbootkit-dhcpd--dhcp-server)
+  - [`tsbootkit-bootpd`](#tsbootkit-bootpd--bootp-server)
+  - [`tsbootkit-netconsoled`](#tsbootkit-netconsoled--netconsole-listener)
+  - [Config vs. CLI Flags](#config-vs-cli-flags)
+  - [PID File and Stale Process Detection](#pid-file-and-stale-process-detection)
+- [Programmatic API](#programmatic-api)
+- [Web Dashboard](#web-dashboard)
+  - [API Endpoints](#api-endpoints)
+- [Health Check](#health-check)
+- [Docker](#docker-1)
+  - [Custom TFTP Port](#custom-tftp-port)
+  - [mDNS in Docker](#mdns-in-docker)
+  - [Volumes](#volumes)
+  - [Ports](#ports)
+- [RFC Compliance](#rfc-compliance)
+- [Development](#development)
+- [TODO](#todo)
+- [License](#license)
+
 Inspired by [pTFTPd](https://github.com/mpetazzoni/ptftpd).
 
 ## Features
